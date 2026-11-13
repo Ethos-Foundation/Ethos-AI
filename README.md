@@ -1,245 +1,150 @@
 # Ethos AI
 
-Um assistente pessoal de IA que roda **localmente** no seu computador: ela ouve sua voz, responde falando, lembra de coisas que você conta, abre programas e pode ler seus e-mails. Tudo funciona offline, sem API paga, com modelos abertos.
-
-Inspirada na ideia de um assistente tipo JARVIS.
-
----
-
-## Sumário
-
-1. [O que ela faz](#o-que-ela-faz)
-2. [Requisitos](#requisitos)
-3. [Instalação passo a passo](#instalação-passo-a-passo)
-4. [Como rodar](#como-rodar)
-5. [Como usar](#como-usar)
-6. [Trocar o modelo de IA](#trocar-o-modelo-de-ia)
-7. [Configurações principais](#configurações-principais)
-8. [Configurar a leitura de e-mails (Gmail)](#configurar-a-leitura-de-e-mails-gmail)
-9. [Estrutura do projeto](#estrutura-do-projeto)
-10. [Subir para o GitHub com segurança](#subir-para-o-github-com-segurança)
-11. [Solução de problemas](#solução-de-problemas)
+Um assistente pessoal de IA que roda **localmente** no seu computador: conversa por voz de forma contínua, tem personalidade (sarcasmo elegante, estilo JARVIS), lembra do que importa sem você pedir, abre programas e lê seus e-mails. Tudo offline, sem API paga, com modelos abertos.
 
 ---
 
 ## O que ela faz
 
-- **Conversa por voz e por texto**, em português e inglês.
-- **Modos de conversa:** bate-papo (`/conversa`), professor de inglês (`/ingles`) e tradutor (`/tradutor`).
-- **Memória persistente:** guarda fatos sobre você, gírias, tarefas e eventos com data, e usa isso nas próximas conversas.
-- **Hora e data** sempre corretas, respondidas direto pelo relógio do computador.
-- **Ferramentas que ela usa sozinha:**
-  - previsão do tempo (Open-Meteo, gratuito, sem chave);
-  - abrir sites e programas (YouTube, Gmail, VS Code, etc.);
-  - criar arquivos de código;
-  - ler e buscar e-mails no Gmail (somente leitura).
-- **Atalho de tecla global:** aperte uma combinação em qualquer programa, fale, e ela responde sem você precisar abrir a janela.
-- **Interface gráfica** com tela cheia, aba de conteúdo para textos longos e aba de ajuda com todos os comandos.
+- **Conversa contínua por voz:** você liga uma vez e fala quando quiser; ela detecta quando você termina, responde falando (frase por frase, enquanto ainda pensa) e volta a ouvir.
+- **Personalidade:** humor seco, opinião própria, sem emojis. Gírias aparecem raramente e ela inventa expressões próprias.
+- **Memória automática:** de tempos em tempos ela revisa a conversa e anota sozinha o que for importante (fatos sobre você, eventos, tarefas, gírias). Você também pode pedir ("anota que...", "esquece que...").
+- **Modos:** conversa (`/conversa`), professor de inglês (`/ingles`) e tradutor (`/tradutor`).
+- **Ferramentas que ela usa sozinha:** hora e data, previsão do tempo, abrir sites e programas, criar arquivos de código, ler e buscar e-mails (somente leitura).
+- **Chat com histórico:** a janela é um chat normal (suas mensagens e as dela, por voz ou texto), com bloco de código copiável. O histórico é lembrado entre aberturas.
+- **Pet no canto da tela:** um orbe sempre visível; clique nele para falar uma vez com ela.
+- **Lembretes com aviso falado:** "me lembra daqui a 20 minutos de tomar água", "amanhã às 9h ligar pro João", "toda segunda às 8h reunião". Ela avisa falando (esperando você terminar de falar com ela), e lembretes que passaram com o app fechado são avisados ao abrir.
+- **Ver a tela:** "olha minha tela", "o que tem na minha tela?", "lê o erro que apareceu". Ela captura a tela, um modelo de visão local a descreve e ela comenta. Veja a seção *Ver a tela*.
+- **Atalhos globais** que funcionam com qualquer programa em foco.
 
 ---
 
 ## Requisitos
 
-**Hardware:**
-- Computador com pelo menos **8 GB de RAM** (16 GB é mais confortável).
-- Placa de vídeo NVIDIA é recomendada: a resposta fica bem mais rápida. Sem GPU, funciona, mas mais devagar.
-- Microfone e caixa de som.
-
-**Software:**
-- **Windows 10 ou 11** (testado no Windows; o núcleo funciona em Linux e macOS, mas o atalho `.lnk` e alguns detalhes são específicos do Windows).
-- **Python 3.10 ou superior** (testado com 3.14). Baixe em [python.org](https://www.python.org/downloads/). Na instalação, marque **"Add Python to PATH"**.
-- **Ollama**, que roda os modelos de IA localmente. Baixe em [ollama.com](https://ollama.com).
-- **Visual Studio Code** (opcional, só se quiser que ela abra o editor).
+- **Windows 10/11** (o núcleo funciona em Linux/macOS, mas o atalho `.lnk` é do Windows).
+- **Python 3.10+** (testado com 3.13). Marque "Add Python to PATH" na instalação.
+- **Ollama** ([ollama.com](https://ollama.com)), aberto em segundo plano.
+- **8 GB de RAM** no mínimo (16 GB é mais confortável). Placa NVIDIA recomendada.
+- Microfone e caixa de som. Com a caixa do notebook funciona, pois o microfone fica fechado enquanto ela fala.
 
 ---
 
-## Instalação passo a passo
-
-### 1. Baixe o projeto
-
-Clone o repositório ou baixe o ZIP e extraia numa pasta, por exemplo `C:\Ethos`.
-
-### 2. Instale o Ollama e baixe os modelos
-
-Instale o Ollama e **abra o aplicativo** (ele precisa estar rodando em segundo plano). Depois, no terminal:
+## Instalação
 
 ```bash
-# Modelo principal (rápido, respostas diretas). Obrigatório.
+# 1. Modelos do Ollama
 ollama pull qwen3:4b-instruct-2507-q4_K_M
 
-# Modelo maior, reserva para tarefas mais complexas. Opcional (~6 GB).
-ollama pull qwen3:8b
-```
+# 2. Bibliotecas (na pasta do projeto)
+pip install -r requirements.txt
 
-Para conferir se o modelo está instalado: `ollama list`.
-
-### 3. Crie um ambiente e instale as bibliotecas
-
-Abra o terminal (PowerShell) dentro da pasta do projeto e rode:
-
-```bash
-pip install ollama faster-whisper sounddevice numpy piper-tts requests pynput google-auth-oauthlib google-api-python-client Pillow
-```
-
-Opcional, só para criar o atalho na área de trabalho:
-
-```bash
-pip install pywin32
-```
-
-> Se o pip reclamar de permissão ou de "externally managed", acrescente `--break-system-packages` no final do comando.
-
-### 4. Baixe as vozes do Piper
-
-As vozes não vêm no repositório (são arquivos grandes). Baixe-as dentro da pasta do projeto:
-
-```bash
+# 3. Vozes do Piper (ficam na pasta do projeto)
 python -m piper.download_voices pt_BR-faber-medium
 python -m piper.download_voices en_GB-alan-medium
 ```
 
-Cada voz gera dois arquivos (`.onnx` e `.onnx.json`), que devem ficar na mesma pasta dos scripts.
+Na primeira execução o Whisper baixa o modelo de reconhecimento de voz (uma vez só; o `large-v3-turbo` tem cerca de 1,6 GB).
 
-> Se quiser usar outra voz, veja a seção [Configurações principais](#configurações-principais).
+**Whisper na GPU (NVIDIA):** o `pip install -r requirements.txt` já traz as bibliotecas CUDA (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`, download grande). Ao abrir, o terminal mostra `Whisper pronto: large-v3-turbo em cuda`. Se a GPU falhar, ela volta sozinha para o modelo `small` na CPU (ajustável em `WHISPER_FALLBACK`).
 
-### 5. Primeira execução
-
-Na primeira vez, o Whisper (reconhecimento de voz) baixa o modelo de transcrição automaticamente. Isso acontece uma vez só e pode levar alguns minutos.
-
----
+**Voz mais natural (opcional, Kokoro):** `pip install kokoro-onnx`, baixe `kokoro-v1.0.onnx` e `voices-v1.0.bin` (releases do projeto kokoro-onnx no GitHub) para a pasta do projeto e rode `python testar_vozes.py` para comparar com o Piper. Para adotar, ajuste `MOTOR_VOZ` e `VOZ_KOKORO` em `config.py`.
 
 ## Como rodar
 
-### Pela interface gráfica (recomendado)
+| Comando | O que faz |
+|---|---|
+| `python ethos_ai_gui.py` | Interface gráfica (recomendado) |
+| `python ethos_ai_gui.py --segundo-plano` | Só o pet (janela escondida); atalhos e voz funcionam |
+| `python testar_gmail.py` | Diagnóstico da leitura de e-mails |
+| `python testar_visao.py` | Compara modelos de visão: tempo, memória de vídeo e qualidade |
+| `python ethos_terminal.py` | Modo terminal, sem janela |
+| `python testar_vozes.py` | Toca as vozes lado a lado (Piper x Kokoro) |
+| `python criar_atalho.py` | Cria o atalho "Ethos AI" na área de trabalho (Windows) |
+| `python -m unittest discover tests` | Roda os testes automáticos |
 
-```bash
-python ethos_ai_gui.py
-```
-
-### Em segundo plano, só com o atalho de tecla
-
-```bash
-python ethos_ai_gui.py --segundo-plano
-```
-
-A janela abre escondida. Você usa a tecla de atalho em qualquer programa, e a resposta sai só por voz.
-
-### Pelo terminal (sem interface)
-
-```bash
-python ethos_ai_voz.py
-```
-
-Aqui você usa ENTER para falar ou digita a pergunta direto.
-
-### Atalho na área de trabalho (Windows)
-
-```bash
-python criar_atalho.py
-```
-
-Cria um ícone "Ethos AI" na área de trabalho, com o ícone do projeto. Dê duplo clique para abrir a interface.
+Abrindo pelo atalho da área de trabalho não aparece terminal; para ver tempos e erros, abra pelo terminal.
 
 ---
 
 ## Como usar
 
-### Atalho de tecla (padrão: `Ctrl+Alt+E`)
+### Atalhos de teclado (funcionam em qualquer programa)
 
-1. Aperte a combinação. Vai soar um tom de início.
-2. Fale sua pergunta.
-3. Quando você parar de falar, ela entende a frase, responde e fala a resposta.
-4. Se quiser cortar a gravação antes (por exemplo, num ambiente barulhento), **aperte a mesma tecla de novo**.
-
-Enquanto ela estiver respondendo, a tecla é ignorada, para não encavalar pedidos.
-
-### Botões da interface
-
-| Botão | O que faz |
+| Atalho | Ação |
 |---|---|
-| **● FALAR** | Grava sua pergunta pelo microfone |
-| **■ PARAR DE OUVIR** | Corta a gravação na hora |
-| **CONVERSA / INGLÊS / TRADUTOR** | Troca o modo de conversa |
-| Caixa de texto | Escreva a pergunta e aperte ENTER |
+| `Ctrl+Alt+C` | Liga/desliga a **conversa contínua** |
+| `Ctrl+Alt+Q` | **Corta a fala** dela na hora |
+| `Ctrl+Alt+E` | Fala uma vez só (aperta, fala, ela responde) |
 
-### Comandos digitados
+Todos podem ser trocados em `config.py`.
+
+### Pet (orbe no canto da tela)
+
+| Ação | O que faz |
+|---|---|
+| Clique | Liga o microfone para uma pergunta (se ela estiver falando, corta a fala) |
+| Arrastar | Muda de lugar (a posição é lembrada) |
+| Botão direito | Menu: abrir janela, conversa contínua, calar, esconder, sair |
+
+Fechar a janela no X só a esconde, e a Ethos continua no pet. Para encerrar de vez, use **Sair da Ethos** no menu do pet. O balão do pet mostra o começo da última resposta por alguns segundos.
+
+### Botões e comandos digitados
+
+`● FALAR`, `■ PARAR`, `∞ CONTÍNUO`, `✕ CALAR`, `VOZ: LIGADA/MUDA` (MUDA = chat só de texto), `PET`, `LIMPAR CHAT` e os modos `CONVERSA / INGLÊS / TRADUTOR`. Enter envia; Shift+Enter quebra linha. Comandos digitados:
 
 | Comando | O que faz |
 |---|---|
-| `/conversa` | Bate-papo em português |
-| `/ingles` | Professor de inglês |
-| `/tradutor` | Traduz entre português e inglês |
+| `/conversa`, `/ingles`, `/tradutor` | Troca o modo |
 | `/memoria` | Mostra tudo que ela guardou |
-| `/ajuda` | Lista os comandos (no terminal) |
-| `sair` | Encerra (no terminal) |
+| `/corrigir e maio = e-mail` | Ensina uma correção de voz (quando o Whisper entende errado) |
+| `/lembretes` | Lista os lembretes agendados |
+| `/limpar` | Limpa o chat |
+| `F11` / `Esc` | Tela cheia / sair da tela cheia |
 
-### Teclas da janela
+### Exemplos
 
-| Tecla | Função |
+- "Que horas são?" / "Qual a previsão do tempo em Lisboa?"
+- "Abre o VS Code." / "Toca lo-fi no YouTube."
+- "Cria um arquivo chamado teste.py com um hello world." (salvo em `~/EthosProjetos`, nunca sobrescreve)
+- "Olha minha tela e me diz o que está errado."
+- "Lê meus e-mails." / "Procura e-mail da Maria."
+- "Anota que tenho prova dia 20." / "Esquece isso."
+- "Me lembra daqui a meia hora de tirar a roupa da máquina." / "Quais são meus lembretes?" / "Cancela o lembrete de água."
+
+---
+
+## Configurações (`config.py`)
+
+Tudo fica num arquivo só. As principais:
+
+| Constante | Para que serve |
 |---|---|
-| `F11` | Liga/desliga tela cheia |
-| `Esc` | Sai da tela cheia |
+| `MODELO_IA` | Modelo de conversa (Ollama) |
+| `TEMPERATURA` | Criatividade da personalidade (0.2 sério, 1.0 solto) |
+| `MODELO_WHISPER`, `WHISPER_DEVICE` | Reconhecimento de voz e onde roda (`cpu` ou `cuda`) |
+| `VOCABULARIO`, `CORRECOES_OUVIDO` | Palavras que o Whisper deve esperar / correções do que ele escreve errado |
+| `LIMITE_VOLUME`, `SILENCIO_CONVERSA` | Sensibilidade do microfone e quanto silêncio indica fim da fala |
+| `PAUSA_POS_FALA` | Espera após ela falar, antes de ouvir de novo (aumente se ela ouvir a si mesma) |
+| `MOTOR_VOZ`, `ARQUIVOS_VOZ`, `VOZ_KOKORO`, `EFEITO_VOZ` | Motor de voz (Piper/Kokoro), arquivos das vozes e eco "Jarvis" |
+| `MEMORIA_AUTOMATICA`, `CURADORIA_A_CADA` | Anotação automática e a cada quantas trocas ela revisa |
+| `PROB_GIRIA`, `PROB_INVENTAR_GIRIA` | Frequência de gírias e de expressões novas |
+| `MODELO_VISAO`, `VISAO_KEEP_ALIVE`, `VISAO_MAX_LADO` | Modelo de visão, quanto tempo fica na GPU e tamanho da captura |
+| `HOTKEY_*` | Atalhos de teclado |
+| `CIDADE_PADRAO`, `PASTA_PROJETOS` | Cidade do tempo e pasta de arquivos criados |
 
-### O que você pode pedir (exemplos)
-
-- "Que horas são?" / "Que dia é hoje?"
-- "Qual a previsão do tempo em Lisboa?"
-- "Lembra que eu tenho prova de física dia 20."
-- "O que eu fiz semana passada?" (usa os eventos que você registrou)
-- "Abre o VS Code." / "Abre o YouTube." / "Toca lo-fi no YouTube."
-- "Cria um arquivo chamado teste.py com um hello world."
-- "Lê meus e-mails." / "Tem e-mail não lido?" / "Procura e-mail da Maria."
-
----
-
-## Trocar o modelo de IA
-
-O modelo é definido em **uma linha** do arquivo `ethos_ai_voz.py`:
-
-```python
-MODELO_IA = "qwen3:4b-instruct-2507-q4_K_M"
-```
-
-Para trocar, edite essa linha com o nome de **qualquer modelo que você tenha no Ollama** (veja com `ollama list`). Exemplos:
-
-```python
-MODELO_IA = "qwen3:8b"                   # mais inteligente, mais lento
-MODELO_IA = "qwen3:4b-instruct-2507-q4_K_M"  # rápido, recomendado para voz
-```
-
-Depois de editar, salve e rode a interface de novo.
-
-**Dicas ao escolher um modelo:**
-- Para **conversa por voz**, prefira modelos rápidos. Resposta de vários segundos já incomoda.
-- Modelos com o sufixo **`instruct`** respondem direto, sem "pensar em voz alta". Eles costumam ser mais rápidos e mais limpos para voz.
-- Modelos maiores (8B ou mais) entendem melhor pedidos complexos, mas exigem mais memória e placa de vídeo.
-- Se a sua placa de vídeo tiver pouca memória, o Ollama divide o modelo entre GPU e CPU, e aí fica lento. Use um modelo menor ou uma versão mais compactada (`q4_K_M` costuma ser um bom equilíbrio).
-
-Para testar se um modelo roda 100% na GPU, enquanto ele estiver respondendo, rode `ollama ps` num outro terminal. A coluna **PROCESSOR** deve mostrar `100% GPU`.
-
-**Para trocar o modelo de reconhecimento de voz** (Whisper), edite `MODELO_WHISPER` no mesmo arquivo: `"base"` é mais rápido, `"small"` entende melhor.
+Para trocar o modelo, escreva o nome de qualquer modelo do `ollama list` em `MODELO_IA`. Modelos `instruct` respondem direto, sem "pensar em voz alta", e são os melhores para voz. Para conferir se roda 100% na GPU: `ollama ps` com o modelo respondendo.
 
 ---
 
-## Configurações principais
+## Ver a tela
 
-Todas ficam no topo dos arquivos, em forma de constante. Não precisa mexer em mais nada.
+Ela captura a tela quando você pede e a manda a um **modelo de visão local** (nada sai do seu computador). Ela **não fica vigiando** a tela: só olha sob demanda.
 
-| Arquivo | Constante | Para que serve |
-|---|---|---|
-| `ethos_ai_voz.py` | `MODELO_IA` | Modelo de conversa (Ollama) |
-| `ethos_ai_voz.py` | `MODELO_WHISPER` | Modelo de reconhecimento de voz |
-| `ethos_ai_voz.py` | `ARQUIVOS_VOZ` | Arquivos das vozes do Piper (português e inglês) |
-| `ethos_ai_voz.py` | `LIMITE_VOLUME` | Sensibilidade do microfone. Se ela não te ouve, diminua (ex.: `0.005`). Se capta barulho demais, aumente |
-| `ethos_ai_voz.py` | `SILENCIO_FINAL` | Segundos de silêncio para considerar que você terminou de falar |
-| `ethos_ai_voz.py` | `EFEITO_VOZ` | Intensidade do eco na voz. `0` desliga |
-| `ethos_ai_voz.py` | `VOCABULARIO` | Palavras que o reconhecimento deve esperar ouvir (ex.: o nome da assistente) |
-| `ethos_ai_gui.py` | `HOTKEY_FALAR` | Combinação de teclas do atalho global (padrão `<ctrl>+<alt>+e`) |
-| `ferramentas_externas.py` | `CIDADE_PADRAO` | Cidade usada na previsão do tempo quando você não informa nenhuma |
+1. Atualize o Ollama (os modelos `qwen3-vl` exigem a versão 0.12.7 ou mais nova) e baixe um modelo: `ollama pull qwen3-vl:4b` (3,3 GB) ou `ollama pull qwen3-vl:2b` (1,9 GB, mais leve).
+2. Rode `python testar_visao.py`: ele mostra o tempo, quanto fica na GPU e a descrição de cada modelo, para você escolher. Ajuste `MODELO_VISAO` em `config.py`.
+3. Peça: "olha minha tela", "o que tem na minha tela?".
 
-**Trocar a voz:** baixe outra voz do Piper (lista em [huggingface.co/rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)) e atualize o nome em `ARQUIVOS_VOZ`.
-
-**Trocar o nome da assistente:** o nome "Ethos" aparece no `ETHOS AI` do cabeçalho (`ethos_ai_gui.py`), nos prompts dos modos (`MODOS` em `ethos_ai_voz.py`) e no `VOCABULARIO`. Basta substituir.
+Com 6 GB de VRAM, o modelo de visão e o de conversa não cabem juntos: o Ollama troca um pelo outro, e o primeiro pedido de tela leva alguns segundos a mais (ela avisa "um instante, vou olhar"). O modelo de visão sai da GPU sozinho após `VISAO_KEEP_ALIVE`. Ela vê tudo que estiver na tela, inclusive a própria janela da Ethos; para ela ver outro programa, chame-a pelo atalho de voz ou pelo pet.
 
 ---
 
@@ -289,81 +194,61 @@ Peça à assistente para ler seus e-mails (por exemplo, "lê meus e-mails"). Uma
 
 | Arquivo | Função |
 |---|---|
-| `ethos_ai_gui.py` | Interface gráfica, atalho de tecla e modo segundo plano. **Comece por aqui.** |
-| `ethos_ai_voz.py` | Núcleo: reconhecimento de voz (Whisper), síntese (Piper), modos de conversa e sons |
-| `memoria.py` | Memória persistente (fatos, gírias, tarefas, eventos com data) |
+| `ethos_ai_gui.py` | Janela de chat (tkinter), atalhos e modo segundo plano. **Comece por aqui.** |
+| `pet.py`, `orbe.py` | Pet no canto da tela e o desenho do orbe |
+| `preferencias.py` | Preferências da janela (pet, voz, posição) |
+| `orquestrador.py` | Fluxo ouvir → pensar → falar, conversa contínua e interrupções |
+| `cerebro.py` | Personalidade, modos, histórico, ferramentas, streaming e memória automática |
+| `ethos_ai_voz.py` | Ouvir (Whisper) e falar (Piper); carrega sob demanda |
+| `texto.py` | Funções de texto puras: frases, filtros, correções, mensagens de erro |
+| `segmentador.py` | Detecta quando você começa e termina de falar |
+| `lembretes.py`, `tempo.py`, `ferramentas_lembretes.py` | Lembretes: armazenamento e agendador, interpretação de "amanhã às 9h" etc., ferramentas |
+| `visao.py`, `ferramentas_visao.py` | Captura da tela e análise com modelo de visão |
+| `memoria.py` | Memória persistente (fatos, gírias, dialeto, correções, tarefas, eventos) |
 | `ferramentas_externas.py` | Hora, data e previsão do tempo |
-| `ferramentas_sistema.py` | Abrir sites e programas, criar arquivos de código |
+| `ferramentas_sistema.py` | Abrir sites/programas, criar arquivos |
 | `ferramentas_gmail.py` | Leitura e busca de e-mails |
-| `criar_atalho.py` | Cria o atalho na área de trabalho (Windows) |
-| `ethos_icone.ico` | Ícone usado no atalho |
+| `ethos_terminal.py` | Modo terminal |
+| `testar_gmail.py`, `testar_vozes.py`, `testar_visao.py` | Diagnósticos |
+| `config.py` | Todas as configurações |
+| `criar_atalho.py`, `ethos_icone.ico` | Atalho da área de trabalho |
+| `tests/` | Testes automáticos |
 
-Arquivos criados automaticamente pelo programa (não fazem parte do repositório):
-- `memoria_ethos.json`: sua memória.
-- `token.json`: autorização do Gmail.
-- Os arquivos `.onnx` das vozes.
+Criados pelo programa (não vão para o repositório): `memoria_ethos.json`, `lembretes_ethos.json`, `chat_ethos.json`, `preferencias_ethos.json`, `token.json`, os `.onnx` das vozes.
 
 ---
 
 ## Subir para o GitHub com segurança
 
-O arquivo `.gitignore` já impede que os itens sensíveis sejam enviados. Antes do primeiro envio, confira:
-
-```bash
-git status
-```
-
-Não deve aparecer nenhum destes arquivos na lista: `credentials.json`, `token.json`, `memoria_ethos.json`, nenhum `.onnx`, nem a pasta `__pycache__`.
-
-Se algum deles já tiver sido enviado num commit anterior, **não basta apagar**: o histórico guarda o conteúdo. Nesse caso, troque as credenciais no Google Cloud (crie um novo ID de cliente e apague o antigo).
+O `.gitignore` já protege `credentials.json`, `token.json`, `memoria_ethos.json` e os `.onnx`. Antes de enviar, rode `git status` e confira que nenhum aparece. Se algum já foi enviado antes, apagar não basta (o histórico guarda): troque as credenciais no Google Cloud.
 
 ---
 
 ## Solução de problemas
 
-**"Connection refused" ou `WinError 10061` ao iniciar**
-O Ollama não está rodando. Abra o aplicativo Ollama e tente de novo.
+**"Não consegui falar com o Ollama"** — abra o aplicativo Ollama e tente de novo.
 
-**A resposta demora muito**
-- Confirme com `ollama ps` se o modelo está em `100% GPU`.
-- Feche navegador e programas pesados (a RAM influencia bastante).
-- Troque para um modelo menor ou para uma versão `instruct`.
+**Resposta demorando** — `ollama ps` deve mostrar `100% GPU`; feche programas pesados; use um modelo `instruct` menor.
 
-**Ela fala o raciocínio interno em inglês ("Let me check...")**
-Use um modelo `instruct` (como o `qwen3:4b-instruct-2507-q4_K_M`). Modelos com "thinking" nem sempre respeitam a instrução de não pensar em voz alta.
+**Ela entende uma palavra errada** — ensine: `/corrigir como ela entendeu = como deveria ser`, ou acrescente em `CORRECOES_OUVIDO` / `VOCABULARIO`.
 
-**Ela não me ouve, ou não para de ouvir**
-Ajuste `LIMITE_VOLUME`. Em ambiente barulhento, use o atalho de novo para cortar a gravação na hora.
+**Ela responde a si mesma** — aumente `PAUSA_POS_FALA` (ex.: 1.0) ou baixe o volume da caixa.
 
-**O atalho de tecla não responde**
-- Confira se nenhum outro programa usa a mesma combinação.
-- Programas abertos "como administrador" bloqueiam atalhos globais. Teste com o programa normal.
-- Troque a combinação em `HOTKEY_FALAR`.
+**Ela dispara com barulho de fundo** — aumente `LIMITE_VOLUME` (ex.: 0.02).
 
-**O VS Code não abre pelo comando**
-No VS Code, aperte `Ctrl+Shift+P` e rode *"Shell Command: Install 'code' command in PATH"*. Depois reinicie o terminal.
+**Ela corta minha fala no meio** — aumente `SILENCIO_CONVERSA` (ex.: 1.0).
 
-**Erro ao criar o atalho na área de trabalho**
-Se a área de trabalho estiver no OneDrive, o script já procura o caminho certo. Se mesmo assim falhar, abra o `criar_atalho.py` e informe o caminho manualmente.
+**Atalho não responde** — outro programa pode usar a mesma combinação; programas abertos "como administrador" bloqueiam atalhos globais; troque em `config.py`.
 
-**"Não encontrei o credentials.json"**
-Coloque o arquivo na mesma pasta do `ethos_ai_gui.py`, com esse nome exato.
+**VS Code não abre** — no VS Code, `Ctrl+Shift+P` → *Shell Command: Install 'code' command in PATH*.
 
-**A voz não aparece / erro ao carregar a voz**
-Confira se os dois arquivos da voz (`.onnx` e `.onnx.json`) estão na pasta do projeto e se o nome em `ARQUIVOS_VOZ` bate com eles.
-
-**A hora está errada**
-A hora vem do relógio do computador. Confira se o Windows está com o fuso horário e a sincronização corretos.
+**Voz não carrega** — confira se os dois arquivos da voz (`.onnx` e `.onnx.json`) estão na pasta e batem com `ARQUIVOS_VOZ`.
 
 ---
 
 ## Privacidade
 
-- Toda a conversa e o reconhecimento de voz acontecem no seu computador.
-- A única conexão com a internet é opcional: a previsão do tempo (Open-Meteo) e a leitura de e-mails (Gmail, se você configurar).
-- Sua memória fica no arquivo `memoria_ethos.json`. Apague o arquivo para zerar tudo.
-
----
+Conversa e reconhecimento de voz acontecem no seu computador. A internet só é usada, e só se você usar, pela previsão do tempo (Open-Meteo) e pelo Gmail. Sua memória fica em `memoria_ethos.json`; apague o arquivo para zerar tudo.
 
 ## Licença
 

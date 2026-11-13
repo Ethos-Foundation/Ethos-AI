@@ -1,0 +1,17 @@
+ollama
+faster-whisper
+sounddevice
+numpy
+piper-tts
+requests
+pynput
+google-auth-oauthlib
+google-api-python-client
+Pillow
+pywin32; sys_platform == "win32"
+
+# Whisper na GPU NVIDIA (CUDA 12). Download grande (~1 GB). Sem isso, ela usa a CPU.
+nvidia-cublas-cu12; sys_platform == "win32"
+nvidia-cudnn-cu12; sys_platform == "win32"
+# Opcional: voz mais natural (veja testar_vozes.py)
+# kokoro-onnx

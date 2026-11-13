@@ -5,11 +5,9 @@ Usa a Open-Meteo (open-meteo.com), gratuita e sem precisar de chave.
 
 import datetime
 
-# Cidade usada quando você não informa nenhuma e não há cidade salva na memória.
-# Troque pela sua (ex.: "Lisboa", "Belo Horizonte", "Nova York").
-CIDADE_PADRAO = "São Paulo"
-
 import requests
+
+from config import CIDADE_PADRAO  # troque a cidade em config.py
 
 DIAS = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
         "sexta-feira", "sábado", "domingo"]

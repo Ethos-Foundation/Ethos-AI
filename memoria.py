@@ -6,10 +6,17 @@ Guarda tudo num arquivo JSON simples (memoria_ethos.json) na mesma pasta.
 import datetime
 import json
 import os
+import random
+import re
+import threading
+
+import config
 
 ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_ethos.json")
 
-_padrao = {"fatos": {}, "girias": {}, "tarefas": [], "eventos": []}
+# "girias" = gírias do USUÁRIO; "dialeto" = expressões que a PRÓPRIA Ethos inventou
+_padrao = {"fatos": {}, "girias": {}, "dialeto": {}, "correcoes": {}, "tarefas": [], "eventos": []}
+_trava = threading.RLock()
 
 
 def carregar():
@@ -17,14 +24,15 @@ def carregar():
         with open(ARQUIVO, encoding="utf-8") as f:
             dados = json.load(f)
         for chave in _padrao:
-            dados.setdefault(chave, _padrao[chave])
+            dados.setdefault(chave, _padrao[chave].copy())
         return dados
     return {k: (v.copy() if hasattr(v, "copy") else v) for k, v in _padrao.items()}
 
 
 def salvar(dados):
-    with open(ARQUIVO, "w", encoding="utf-8") as f:
-        json.dump(dados, f, ensure_ascii=False, indent=2)
+    with _trava:  # a anotação automática roda em outra thread
+        with open(ARQUIVO, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False, indent=2)
 
 
 memoria = carregar()
@@ -47,6 +55,23 @@ def aprender_giria(termo, significado):
     memoria["girias"][termo.lower().strip()] = significado
     salvar(memoria)
     return f"Aprendido: '{termo}' significa '{significado}'."
+
+
+def aprender_dialeto(termo, significado):
+    """Guarda uma expressão que a própria Ethos inventou."""
+    memoria["dialeto"][termo.lower().strip()] = significado
+    salvar(memoria)
+    return f"Expressão própria registrada: '{termo}' = {significado}."
+
+
+def adicionar_correcao(entendido, correto):
+    """Ensina que, quando a transcrição trouxer `entendido`, o certo é `correto`."""
+    entendido, correto = entendido.strip().lower(), correto.strip()
+    if not entendido or not correto:
+        return "Preciso das duas partes: o que foi entendido e o que era para ser."
+    memoria["correcoes"][entendido] = correto
+    salvar(memoria)
+    return f"Combinado: quando eu entender '{entendido}', vou escrever '{correto}'."
 
 
 def adicionar_tarefa(texto):
@@ -106,6 +131,9 @@ def resumo():
     if memoria["girias"]:
         partes.append("Gírias/termos aprendidos: " +
                        "; ".join(f"'{k}' = {v}" for k, v in memoria["girias"].items()))
+    if memoria["dialeto"]:
+        partes.append("Dialeto próprio da Ethos: " +
+                       "; ".join(f"'{k}' = {v}" for k, v in memoria["dialeto"].items()))
     pendentes = [t for t in memoria["tarefas"] if not t["feita"]]
     if pendentes:
         partes.append("Tarefas pendentes: " +
@@ -122,11 +150,48 @@ def resumo():
     return "\n".join(partes) if partes else ""
 
 
+# ------------- contexto SELETIVO para o modelo (não despeja tudo) -------------
+def _palavras(texto):
+    return set(re.findall(r"\w{4,}", texto.lower()))
+
+
+def contexto_para(pergunta):
+    """Linhas de contexto a mandar junto da pergunta. Com poucos fatos, vão todos;
+    com muitos, só os que têm a ver com a pergunta + os mais recentes."""
+    linhas = [f"Hoje: {datetime.date.today().isoformat()}."]
+    fatos = list(memoria["fatos"].items())
+    if len(fatos) > config.MAX_FATOS_CONTEXTO:
+        alvo = _palavras(pergunta)
+        relevantes = [(k, v) for k, v in fatos if alvo & _palavras(f"{k} {v}")]
+        recentes = fatos[-(config.MAX_FATOS_CONTEXTO // 2):]
+        fatos = list(dict(relevantes + recentes).items())[:config.MAX_FATOS_CONTEXTO]
+    if fatos:
+        linhas.append("Sobre o usuário: " + "; ".join(f"{k}: {v}" for k, v in fatos))
+    pendentes = [t for t in memoria["tarefas"] if not t["feita"]]
+    if pendentes:
+        linhas.append("Tarefas pendentes: " + "; ".join(f"#{t['id']} {t['texto']}" for t in pendentes))
+    recentes = memoria["eventos"][-3:]
+    if recentes:
+        linhas.append("Eventos recentes: " + "; ".join(f"{e['data']}: {e['texto']}" for e in recentes))
+    return linhas
+
+
+def sortear_giria():
+    """Na maioria das vezes devolve None. De vez em quando sorteia UMA gíria
+    (do usuário ou do dialeto da Ethos) como sugestão opcional para a resposta.
+    Isso impede que ela fique repetindo a mesma gíria a toda hora."""
+    if random.random() >= config.PROB_GIRIA:
+        return None
+    pool = [("usuario", k, v) for k, v in memoria["girias"].items()]
+    pool += [("dialeto", k, v) for k, v in memoria["dialeto"].items()] * 2
+    return random.choice(pool) if pool else None
+
+
 # --------------------- ferramentas (tool calling) --------------------
 FERRAMENTAS = [
     {"type": "function", "function": {
         "name": "salvar_fato",
-        "description": "Salva uma informação sobre o usuário para lembrar depois (nome, preferências, dados pessoais).",
+        "description": "Salva uma informação sobre o usuário. Use APENAS quando ele pedir explicitamente para lembrar/anotar algo (o resto é anotado automaticamente).",
         "parameters": {"type": "object", "properties": {
             "chave": {"type": "string", "description": "do que se trata, ex.: 'curso', 'time do coração'"},
             "valor": {"type": "string", "description": "a informação em si"}},
@@ -138,10 +203,18 @@ FERRAMENTAS = [
             "chave": {"type": "string"}}, "required": ["chave"]}}},
     {"type": "function", "function": {
         "name": "aprender_giria",
-        "description": "Aprende uma gíria, apelido ou termo informal usado pelo usuário e o que ele significa.",
+        "description": "Aprende uma gíria ou apelido do usuário. Use APENAS quando ele pedir explicitamente para você aprender o termo.",
         "parameters": {"type": "object", "properties": {
             "termo": {"type": "string"}, "significado": {"type": "string"}},
             "required": ["termo", "significado"]}}},
+    {"type": "function", "function": {
+        "name": "aprender_correcao",
+        "description": ("Registra que a transcrição da voz errou uma palavra. Use APENAS quando o "
+                        "usuário disser que você entendeu errado (ex.: 'quando eu falo e-mail você escreve e maio')."),
+        "parameters": {"type": "object", "properties": {
+            "entendido": {"type": "string", "description": "como a palavra apareceu errada"},
+            "correto": {"type": "string", "description": "como deveria ser"}},
+            "required": ["entendido", "correto"]}}},
     {"type": "function", "function": {
         "name": "adicionar_tarefa",
         "description": "Adiciona uma tarefa ou lembrete pedido pelo usuário.",
@@ -160,9 +233,8 @@ FERRAMENTAS = [
     {"type": "function", "function": {
         "name": "registrar_evento",
         "description": (
-            "Registra algo que o usuário fez, viveu ou aconteceu, para lembrar depois "
-            "(ex.: 'fui ao médico', 'terminei o projeto X', 'viajei para tal lugar'). "
-            "Chame isso sempre que o usuário contar algo relevante que fez ou que aconteceu."
+            "Registra um acontecimento com data. Use APENAS quando o usuário pedir "
+            "explicitamente para anotar/registrar algo (o resto é anotado automaticamente)."
         ),
         "parameters": {"type": "object", "properties": {
             "texto": {"type": "string", "description": "o que aconteceu, de forma breve"},
@@ -184,6 +256,7 @@ FERRAMENTAS = [
 _FUNCOES = {
     "salvar_fato": salvar_fato, "esquecer_fato": esquecer_fato,
     "aprender_giria": aprender_giria, "adicionar_tarefa": adicionar_tarefa,
+    "aprender_correcao": adicionar_correcao,
     "concluir_tarefa": concluir_tarefa, "remover_tarefa": remover_tarefa,
     "registrar_evento": registrar_evento, "consultar_eventos": consultar_eventos,
 }

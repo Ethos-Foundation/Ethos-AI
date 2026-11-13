@@ -1,237 +1,170 @@
 """
-Ethos AI v0.3 - conversa por voz em português e inglês, 100% local.
-
-Fluxo:  microfone -> faster-whisper (voz vira texto) -> Ollama (IA pensa)
-        -> Piper (texto vira voz neural)
-
-Instalação (no terminal):
-    pip install -U ollama faster-whisper sounddevice numpy piper-tts
+Ethos AI - voz: ouvir (faster-whisper) e falar (Piper).
+Aqui não há lógica de conversa; isso fica em cerebro.py.
 
 Vozes (rode NA MESMA PASTA deste arquivo, uma vez cada):
     python -m piper.download_voices pt_BR-faber-medium
-    python -m piper.download_voices en_US-ryan-medium
-
-Comandos (digite no lugar de apertar ENTER):
-    /conversa  -> bate-papo normal em português
-    /ingles    -> treino de inglês: você fala inglês, ela responde e corrige
-    /tradutor  -> você fala em português e ela traduz para inglês (e vice-versa)
-    /ajuda     -> mostra os comandos
-    sair       -> encerra
+    python -m piper.download_voices en_GB-alan-medium
 """
 
 import io
 import os
-import re
+import queue
 import threading
 import time
 import wave
 
 import numpy as np
-import ollama
 import sounddevice as sd
-from faster_whisper import WhisperModel
-from piper import PiperVoice
 
-# ======================= CONFIGURAÇÕES (mexa à vontade) =======================
-MODELO_IA = "qwen3:4b-instruct-2507-q4_K_M"
-MODELO_WHISPER = "small"  # "base" = mais rápido | "small" = entende melhor
-
-# Arquivos das vozes do Piper (ficam na mesma pasta deste script)
-ARQUIVOS_VOZ = {
-    "pt": "pt_BR-faber-medium.onnx",
-    "en": "en_GB-alan-medium.onnx",  # britânica masculina (sotaque tipo Jarvis)
-}
-
-# --- Microfone ---
-TAXA = 16000           # o Whisper usa 16 kHz
-LIMITE_VOLUME = 0.01   # sensibilidade: se ele não te ouve, diminua (ex.: 0.005)
-SILENCIO_FINAL = 1.2   # segundos de silêncio para entender que você terminou
-ESPERA_MAXIMA = 8      # segundos esperando você começar a falar
-GRAVACAO_MAXIMA = 30   # limite de segurança por fala
-
-# --- Palavra de ativação (modo "escuta contínua") ---
-PALAVRA_ATIVACAO = "ei ethos"  # em minúsculas, sem acento, para comparar fácil
-
-# --- PERSONALIZAÇÃO DO NOME "ETHOS" ---
-# 1) Dica de vocabulário para o Whisper: palavras que ele deve esperar ouvir.
-#    Coloque aqui nomes e termos que ele costuma errar.
-VOCABULARIO = "Ethos AI, Ethos."
-
-# 2) Correções do que ele ESCREVEU errado -> como deveria ser.
-#    Rode, veja o que aparece em "VOCÊ >" e vá adicionando os erros dele aqui.
-CORRECOES_OUVIDO = {
-    "etos": "Ethos",
-    "etus": "Ethos",
-    "ethus": "Ethos",
-    "éthos": "Ethos",
-    "ethós": "Ethos",
-}
-
-# 3) Pronúncia da voz em português: como a palavra deve SOAR (só na fala,
-#    o texto na tela continua "Ethos"). Ajuste até ficar como você quer.
-PRONUNCIAS_PT = {
-    "Ethos": "Étos",
-}
-# =============================================================================
+import config
+import memoria
+from segmentador import SegmentadorFala
+from texto import corrigir_texto, parece_alucinacao
 
 PASTA = os.path.dirname(os.path.abspath(__file__))
 
-# Cada modo define: em que idioma você fala, e a "personalidade" da IA.
-MODOS = {
-    "conversa": {
-        "ouvir": "pt",
-        "prompt": (
-            "/no_think\n\n"
-            "IMPORTANTE: não pense em voz alta, não narre seu raciocínio, não escreva "
-            "frases como 'let me check', 'the user wants', 'so maybe' ou qualquer "
-            "análise sobre como responder. Sua PRIMEIRA palavra já deve ser o início "
-            "da resposta final, direto, sem nenhum rascunho ou reflexão antes dela.\n\n"
-            "Você é a ETHOS AI, uma assistente pessoal de IA com estilo futurista, "
-            "inspirada no JARVIS do Homem de Ferro. Responda sempre em português do "
-            "Brasil, de forma educada, direta e com um toque leve de sarcasmo elegante. "
-            "Suas respostas serão FALADAS em voz alta, então seja curta (no máximo 3 "
-            "frases) e não use listas, emojis, asteriscos nem formatação. "
-            "EXCEÇÃO: se o usuário pedir código, um poema, uma redação, um texto longo "
-            "ou qualquer conteúdo para ser escrito/copiado (não apenas conversado), "
-            "responda em DUAS partes separadas EXATAMENTE pela linha '---CONTEUDO---' "
-            "(sozinha, sem mais nada nela): antes dessa linha, uma confirmação FALADA "
-            "bem curta, tipo 'Pronto, já fiz.' ou 'Prontinho, está na tela.'; depois "
-            "dessa linha, o conteúdo completo, sem comentários extras, sem repetir a "
-            "confirmação. Use essa marcação SOMENTE nesses casos, nunca numa conversa normal."
-        ),
-        "aviso": ("pt", "Modo conversa ativado."),
-    },
-    "ingles": {
-        "ouvir": "en",
-        "prompt": (
-            "/no_think\n\n"
-            "IMPORTANT: do not think out loud, do not narrate your reasoning, do not "
-            "write things like 'let me check', 'the user wants' or any analysis of "
-            "how to respond. Your FIRST word must already be the start of your final "
-            "answer, directly, with no draft or reflection before it.\n\n"
-            "You are ETHOS AI, a friendly English tutor and conversation partner. "
-            "The user is a Brazilian learning English. Reply in simple, natural English "
-            "(level B1), in at most 2 short sentences, and ask a short follow-up question "
-            "to keep the conversation going. Your replies will be spoken aloud, so do not "
-            "use lists, emojis, asterisks or formatting. If the user made a grammar or "
-            "vocabulary mistake, add at the very end a short tip IN PORTUGUESE starting "
-            "with 'Dica:' showing the corrected sentence. If there was no mistake, do not "
-            "add any tip."
-        ),
-        "aviso": ("en", "English practice mode on. Let's talk!"),
-    },
-    "tradutor": {
-        "ouvir": None,  # o Whisper descobre sozinho se você falou português ou inglês
-        "prompt": (
-            "/no_think\n\n"
-            "IMPORTANTE: não pense em voz alta nem narre seu raciocínio antes de "
-            "traduzir. Sua PRIMEIRA palavra já deve ser o início da tradução, direto.\n\n"
-            "Você é um tradutor profissional. Se o usuário falar em português, traduza "
-            "para o inglês. Se falar em inglês, traduza para o português do Brasil. "
-            "Responda SOMENTE com a tradução, sem comentários, sem aspas e sem explicações."
-        ),
-        "aviso": ("pt", "Modo tradutor ativado. Fale em português ou inglês."),
-    },
-}
-
-estado = {"modo": "conversa", "historico": []}
-
-
-def trocar_modo(nome):
-    estado["modo"] = nome
-    estado["historico"] = [{"role": "system", "content": MODOS[nome]["prompt"]}]
-
-
 # ---------------------------- CARREGAMENTO ----------------------------
-print("Carregando reconhecimento de voz...")
-# CPU + int8 é o jeito mais simples e deixa a placa de vídeo livre para a IA
-whisper = WhisperModel(MODELO_WHISPER, device="cpu", compute_type="int8")
-
-print("Carregando vozes...")
+# Whisper e vozes só são carregados quando precisam (ou quando a GUI chama
+# carregar() em segundo plano na abertura), para a janela abrir na hora.
+_whisper = None
+_vozes_prontas = False
+_kokoro = None
 vozes = {}
-for idioma, arquivo in ARQUIVOS_VOZ.items():
-    caminho = os.path.join(PASTA, arquivo)
-    if os.path.exists(caminho):
-        vozes[idioma] = PiperVoice.load(caminho)
-    else:
-        print(f"⚠ Voz '{arquivo}' não encontrada. Baixe com: "
-              f"python -m piper.download_voices {arquivo.replace('.onnx', '')}")
-if "pt" not in vozes:
-    raise SystemExit("A voz em português é obrigatória. Baixe-a e rode de novo.")
+_trava_whisper = threading.Lock()   # travas SEPARADAS: a voz não espera o Whisper
+_trava_vozes = threading.Lock()
 
 
-# --------------------- FILTRO DE SEGURANÇA DO "PENSAMENTO" -------------
-# Frases típicas de raciocínio vazando sem tag (o Qwen3 às vezes "pensa em
-# inglês" mesmo com think=False, sem usar <think>). Se um parágrafo COMEÇA
-# com uma dessas pistas, ele é descartado inteiro.
-PISTAS_RACIOCINIO = (
-    "let me", "so maybe", "the user", "i should", "i need to", "i will",
-    "wait,", "actually,", "hmm,", "okay,", "first,", "checking the",
-    "according to the rules", "so the response", "so i",
-)
+def _registrar_dlls_nvidia():
+    """No Windows, o pip instala o cuBLAS/cuDNN em site-packages/nvidia/*/bin.
+    Avisamos o Python onde estão para o Whisper achar a GPU."""
+    if os.name != "nt":
+        return
+    try:
+        import nvidia
+    except ImportError:
+        return
+    for base in list(nvidia.__path__):
+        try:
+            subpastas = os.listdir(base)
+        except OSError:
+            continue
+        for sub in subpastas:
+            pasta = os.path.join(base, sub, "bin")
+            if os.path.isdir(pasta):
+                os.add_dll_directory(pasta)
+                os.environ["PATH"] = pasta + os.pathsep + os.environ.get("PATH", "")
 
 
-def remover_pensamento(texto):
-    """Remove o pensamento do texto, em qualquer formato que ele apareça:
-    1) <think>...</think> completo (par normal);
-    2) só "...</think>" sem abertura correspondente — bug observado no Ollama
-       com think=False, onde a tag de abertura é suprimida mas o texto do
-       pensamento continua grudado no content, e só a tag de fechamento sobra.
-       Nesse caso, tudo ANTES do último </think> é pensamento e é descartado;
-    3) parágrafos de raciocínio solto em inglês, sem tag nenhuma."""
-    texto = re.sub(r"<think>.*?</think>", "", texto, flags=re.DOTALL)
+def _criar_whisper():
+    """Tenta o modelo configurado (GPU) e, se algo falhar, o plano B (CPU)."""
+    from faster_whisper import WhisperModel
+    tentativas = [(config.MODELO_WHISPER, config.WHISPER_DEVICE, config.WHISPER_COMPUTE)]
+    if tentativas[0] != tuple(config.WHISPER_FALLBACK):
+        tentativas.append(tuple(config.WHISPER_FALLBACK))
+    ultimo_erro = None
+    for modelo, dispositivo, compute in tentativas:
+        try:
+            if dispositivo == "cuda":
+                _registrar_dlls_nvidia()
+            w = WhisperModel(modelo, device=dispositivo, compute_type=compute)
+            # Aquecimento: força o carregamento das bibliotecas CUDA agora, e não no
+            # meio da sua primeira frase (e revela na hora se a GPU não está funcionando).
+            list(w.transcribe(np.zeros(config.TAXA, dtype=np.float32),
+                              language="pt", vad_filter=False)[0])
+            print(f"Whisper pronto: {modelo} em {dispositivo} ({compute})")
+            return w
+        except Exception as erro:
+            print(f"⚠ Whisper {modelo} em {dispositivo} não funcionou: {erro}")
+            ultimo_erro = erro
+    raise RuntimeError(f"Não consegui carregar o reconhecimento de voz: {ultimo_erro}")
 
-    if "</think>" in texto:
-        texto = texto.rsplit("</think>", 1)[1]
-    texto = texto.strip()
 
-    paragrafos = [p for p in texto.split("\n\n") if p.strip()]
-    paragrafos_limpos = [
-        p for p in paragrafos
-        if not p.strip().lower().startswith(PISTAS_RACIOCINIO)
-    ]
-    # só aplica se sobrar pelo menos um parágrafo depois de filtrar
-    # (evita apagar a resposta inteira por engano)
-    if paragrafos_limpos:
-        texto = "\n\n".join(paragrafos_limpos)
-    return texto.strip()
+def carregar_whisper():
+    global _whisper
+    if _whisper is not None:
+        return
+    with _trava_whisper:
+        if _whisper is None:
+            print("Carregando reconhecimento de voz...")
+            _whisper = _criar_whisper()
+
+
+def carregar_vozes():
+    global _vozes_prontas, _kokoro
+    if _vozes_prontas:
+        return
+    with _trava_vozes:
+        if _vozes_prontas:
+            return
+        from piper import PiperVoice
+
+        print("Carregando vozes...")
+        for idioma, arquivo in config.ARQUIVOS_VOZ.items():
+            caminho = os.path.join(PASTA, arquivo)
+            if os.path.exists(caminho):
+                vozes[idioma] = PiperVoice.load(caminho)
+            else:
+                print(f"⚠ Voz '{arquivo}' não encontrada. Baixe com: "
+                      f"python -m piper.download_voices {arquivo.replace('.onnx', '')}")
+        if "pt" not in vozes:
+            raise RuntimeError("A voz em português é obrigatória. Baixe-a "
+                               "(python -m piper.download_voices pt_BR-faber-medium) e abra de novo.")
+        _tentar_kokoro()
+        _vozes_prontas = True
+
+
+def _tentar_kokoro():
+    """Carrega o Kokoro se existir e se o MOTOR_VOZ pedir (ou para o testar_vozes.py)."""
+    global _kokoro
+    modelo, vozes_bin = (os.path.join(PASTA, n) for n in ("kokoro-v1.0.onnx", "voices-v1.0.bin"))
+    if not (os.path.exists(modelo) and os.path.exists(vozes_bin)):
+        if config.MOTOR_VOZ == "kokoro":
+            print("⚠ Kokoro pedido, mas faltam kokoro-v1.0.onnx / voices-v1.0.bin na pasta. Usando Piper.")
+        return
+    try:
+        from kokoro_onnx import Kokoro
+        _kokoro = Kokoro(modelo, vozes_bin)
+    except Exception as erro:
+        print(f"⚠ Não consegui carregar o Kokoro ({erro}). Usando Piper.")
+
+
+def whisper_pronto():
+    return _whisper is not None
+
+
+def carregar():
+    carregar_vozes()      # rápido: primeiro, para ela já poder falar
+    carregar_whisper()    # lento (baixa/carrega o modelo na 1ª vez)
 
 
 # ------------------------------- OUVIR --------------------------------
-def corrigir_texto(texto):
-    """Troca palavras que o Whisper costuma errar (ex.: 'etos' -> 'Ethos')."""
-    for errado, certo in CORRECOES_OUVIDO.items():
-        texto = re.sub(rf"\b{re.escape(errado)}\b", certo, texto, flags=re.IGNORECASE)
-    return texto
-
-
-def _gravar_ate_silencio(espera_maxima=ESPERA_MAXIMA, gravacao_maxima=GRAVACAO_MAXIMA,
-                          verificar_parar=None):
+def _gravar_ate_silencio(espera_maxima=config.ESPERA_MAXIMA,
+                         gravacao_maxima=config.GRAVACAO_MAXIMA, verificar_parar=None):
     """Grava do microfone até você ficar em silêncio (ou os limites baterem).
     Devolve o áudio (numpy array) ou None se ninguém falou / foi pedido para parar.
-    verificar_parar: função opcional chamada a cada pedaço; se retornar True,
-    interrompe a gravação na hora (usado pelo botão de desligar o microfone)."""
+    verificar_parar: função chamada a cada pedaço; se retornar True, interrompe."""
     blocos = []
     falou = False
     silencio = 0.0
     total = 0.0
     passo = 0.1  # lê o microfone em pedaços de 0,1 s
 
-    with sd.InputStream(samplerate=TAXA, channels=1, dtype="float32") as mic:
+    with sd.InputStream(samplerate=config.TAXA, channels=1, dtype="float32") as mic:
         while True:
             if verificar_parar is not None and verificar_parar():
                 return None
-            bloco, _ = mic.read(int(TAXA * passo))
+            bloco, _ = mic.read(int(config.TAXA * passo))
             blocos.append(bloco)
             total += passo
             volume = float(np.sqrt(np.mean(bloco**2)))
 
-            if volume > LIMITE_VOLUME:
+            if volume > config.LIMITE_VOLUME:
                 falou = True
                 silencio = 0.0
             elif falou:
                 silencio += passo
-                if silencio >= SILENCIO_FINAL:
+                if silencio >= config.SILENCIO_FINAL:
                     break
 
             if not falou and total >= espera_maxima:
@@ -244,97 +177,198 @@ def _gravar_ate_silencio(espera_maxima=ESPERA_MAXIMA, gravacao_maxima=GRAVACAO_M
 
 def _transcrever(audio, idioma_forcado=None):
     """Transcreve um áudio já gravado. Devolve (texto_corrigido, idioma)."""
+    carregar_whisper()
     inicio = time.time()
-    segmentos, info = whisper.transcribe(
+    segmentos, info = _whisper.transcribe(
         audio,
         language=idioma_forcado,  # None = detectar sozinho
-        initial_prompt=VOCABULARIO,
+        initial_prompt=config.VOCABULARIO,
         vad_filter=True,
     )
-    texto = " ".join(s.text.strip() for s in segmentos).strip()
+    frase = " ".join(s.text.strip() for s in segmentos).strip()
     print(f"⏱ transcrição: {time.time() - inicio:.1f}s")
     idioma = info.language if info.language in ("pt", "en") else "pt"
-    return corrigir_texto(texto), idioma
+    return corrigir_texto(frase, memoria.memoria.get("correcoes")), idioma
 
 
-def ouvir(verificar_parar=None):
-    """Grava até você ficar em silêncio (ou até verificar_parar() retornar
-    True, se for passado — usado pelo botão 'parar de ouvir agora', útil em
-    ambiente barulhento onde o silêncio de 1s pode nunca ser detectado).
-    Retorna (texto, idioma_detectado)."""
+def ouvir(idioma_esperado=None, verificar_parar=None):
+    """Grava até você ficar em silêncio e transcreve. Retorna (texto, idioma)."""
     print("🎤 Ouvindo... (fale agora)")
     audio = _gravar_ate_silencio(verificar_parar=verificar_parar)
     if audio is None:
         return "", "pt"
-    idioma_esperado = MODOS[estado["modo"]]["ouvir"]
     return _transcrever(audio, idioma_esperado)
 
 
-def _normalizar(texto):
-    """Minúsculas e sem acento, para comparar com a palavra de ativação."""
-    import unicodedata
-    texto = unicodedata.normalize("NFKD", texto.lower())
-    return "".join(c for c in texto if not unicodedata.combining(c))
+def escutar_fala(verificar_parar):
+    """Fica com o microfone aberto até você falar e terminar. Devolve o áudio, ou
+    None se verificar_parar() virou True antes disso. Não grava nada enquanto a
+    Ethos fala (quem chama só chama esta função quando ela já terminou)."""
+    segmentador = SegmentadorFala()
+    passo = 0.1
+    with sd.InputStream(samplerate=config.TAXA, channels=1, dtype="float32") as mic:
+        while not verificar_parar():
+            bloco, _ = mic.read(int(config.TAXA * passo))
+            audio = segmentador.alimentar(bloco.flatten())
+            if audio is not None:
+                return audio
+    return None
 
 
-def ouvir_com_palavra_de_ativacao(verificar_parar):
-    """Modo 'escuta contínua': grava uma fala, transcreve, e só devolve algo
-    se a frase contiver a palavra de ativação ('ei ethos'). Nesse caso,
-    devolve o texto que veio DEPOIS da palavra de ativação (o pedido de
-    verdade). Se não detectar a palavra, devolve (None, None) e quem chamou
-    deve tentar de novo (loop contínuo).
-    verificar_parar: função chamada periodicamente; se retornar True, a
-    escuta para imediatamente (botão de desligar o microfone)."""
-    audio = _gravar_ate_silencio(
-        espera_maxima=3600,  # não desiste sozinho: só para quando mandarem
-        verificar_parar=verificar_parar,
-    )
+def ouvir_uma_fala(idioma_esperado=None, verificar_parar=lambda: False):
+    """Modo conversa contínua: espera você falar e devolve (texto, idioma).
+    Devolve ("", "pt") se mandaram parar, se foi ruído ou se o Whisper alucinou."""
+    audio = escutar_fala(verificar_parar)
     if audio is None:
-        return None, None  # ninguém falou nesse ciclo, ou foi pedido parar
-
-    texto, idioma = _transcrever(audio, None)  # detecta idioma sozinho aqui
-    texto_normalizado = _normalizar(texto)
-    gatilho_normalizado = _normalizar(PALAVRA_ATIVACAO)
-
-    if gatilho_normalizado not in texto_normalizado:
-        return None, None  # falou algo, mas não ativou a Ethos
-
-    # extrai só o que vem depois da palavra de ativação, se tiver algo
-    indice = texto_normalizado.find(gatilho_normalizado)
-    resto = texto[indice + len(PALAVRA_ATIVACAO):].strip(" ,.!?-")
-    if resto:
-        return resto, idioma
-    return "", idioma  # disse só "ei ethos" sem pedir nada ainda
+        return "", "pt"
+    frase, idioma = _transcrever(audio, idioma_esperado)
+    if parece_alucinacao(frase):
+        print(f"(ignorado, parece ruído: {frase!r})")
+        return "", idioma
+    return frase, idioma
 
 
 # ------------------------------- FALAR --------------------------------
-# Intensidade do efeito de voz (0 = desligado). Ajuste ao gosto.
-EFEITO_VOZ = 1.0
-
-
 def aplicar_efeito_jarvis(audio_int16, taxa):
-    """Deixa a voz com cara de sistema: um eco curto e discreto e uma leve
-    compressão, que dá presença sem distorcer. Recebe e devolve float."""
+    """Deixa a voz com cara de sistema: eco curto e discreto + leve compressão."""
     x = audio_int16.astype(np.float32)
     x = x / (np.max(np.abs(x)) + 1e-9)
-    if EFEITO_VOZ <= 0:
+    if config.EFEITO_VOZ <= 0:
         return (x * 0.9).astype(np.float32)
     saida = x.copy()
     for atraso_s, ganho in ((0.035, 0.22), (0.09, 0.10)):
         d = int(atraso_s * taxa)
-        saida[d:] += EFEITO_VOZ * ganho * x[:-d]
+        saida[d:] += config.EFEITO_VOZ * ganho * x[:-d]
     saida = np.tanh(1.4 * saida) / np.tanh(1.4)  # compressão suave
     return (saida * 0.9).astype(np.float32)
 
 
+def _sintetizar_kokoro(frase, idioma, voz=None):
+    nome, lang = config.VOZ_KOKORO[idioma]
+    amostras, taxa = _kokoro.create(frase, voice=voz or nome,
+                                    speed=config.VELOCIDADE_KOKORO, lang=lang)
+    return np.asarray(amostras, dtype=np.float32), taxa
+
+
+def _sintetizar_piper(frase, idioma):
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as arquivo:
+        vozes[idioma].synthesize_wav(frase, arquivo)
+    buffer.seek(0)
+    with wave.open(buffer, "rb") as arquivo:
+        taxa = arquivo.getframerate()
+        audio = np.frombuffer(arquivo.readframes(arquivo.getnframes()), dtype=np.int16)
+    return audio, taxa
+
+
+def sintetizar(frase, idioma="pt", motor=None, voz_kokoro=None):
+    """Texto -> (áudio float32 com efeito, taxa). Não toca nada.
+    `motor` ("piper"/"kokoro") força um motor (usado pelo testar_vozes.py);
+    sem ele vale o MOTOR_VOZ, com volta automática para o Piper se o Kokoro faltar."""
+    import re
+    carregar_vozes()
+    explicito = motor is not None
+    motor = motor or config.MOTOR_VOZ
+    if idioma not in vozes:
+        idioma = "pt"
+    if idioma == "pt":
+        for escrita, som in config.PRONUNCIAS_PT.items():
+            frase = re.sub(rf"\b{re.escape(escrita)}\b", som, frase, flags=re.IGNORECASE)
+
+    if motor == "kokoro" and _kokoro is None and explicito:
+        raise RuntimeError("Kokoro não está disponível (faltam os arquivos ou o pacote kokoro-onnx).")
+    if motor == "kokoro" and _kokoro is not None and idioma in config.VOZ_KOKORO:
+        audio, taxa = _sintetizar_kokoro(frase, idioma, voz_kokoro)
+    else:
+        audio, taxa = _sintetizar_piper(frase, idioma)
+    return aplicar_efeito_jarvis(audio, taxa), taxa
+
+
+def falar(frase, idioma="pt"):
+    """Fala uma frase e espera terminar (usado para avisos curtos)."""
+    audio, taxa = sintetizar(frase, idioma)
+    sd.play(audio, taxa)
+    sd.wait()
+
+
+class Locutor:
+    """Fala frases em sequência, em linha de montagem: enquanto uma frase toca,
+    a próxima já está sendo sintetizada (some a pausa entre as frases).
+
+        loc = Locutor("pt", ao_comecar=callback)
+        loc.dizer("Primeira frase.")
+        loc.dizer("Segunda frase.")
+        loc.terminar()   # espera tudo ser falado
+    """
+
+    def __init__(self, idioma="pt", ao_comecar=None):
+        self.idioma = idioma
+        self.ao_comecar = ao_comecar          # chamado quando o 1º áudio começa a tocar
+        self.cortado = False                  # True depois de cortar(): descarta o resto
+        self._frases = queue.Queue()
+        self._audios = queue.Queue(maxsize=2)
+        self._sintese = threading.Thread(target=self._loop_sintese, daemon=True)
+        self._toque = threading.Thread(target=self._loop_toque, daemon=True)
+        self._sintese.start()
+        self._toque.start()
+
+    def dizer(self, frase):
+        if not self.cortado and frase and frase.strip():
+            self._frases.put(frase)
+
+    def cortar(self):
+        """Interrompe a fala na hora e descarta as frases que faltavam."""
+        self.cortado = True
+        sd.stop()
+
+    def terminar(self):
+        self._frases.put(None)
+        self._sintese.join()
+        self._toque.join()
+
+    def _loop_sintese(self):
+        while True:
+            frase = self._frases.get()
+            if frase is None:
+                self._audios.put(None)
+                return
+            if self.cortado:
+                continue
+            try:
+                self._audios.put(sintetizar(frase, self.idioma))
+            except Exception as erro:
+                print(f"⚠ erro ao sintetizar voz: {erro}")
+
+    def _loop_toque(self):
+        primeiro = True
+        while True:
+            item = self._audios.get()
+            if item is None:
+                return
+            if self.cortado:
+                continue
+            if primeiro:
+                primeiro = False
+                if self.ao_comecar:
+                    self.ao_comecar()
+            try:
+                sd.play(item[0], item[1])
+                sd.wait()
+            except Exception as erro:
+                print(f"⚠ erro ao tocar áudio: {erro}")
+
+
+# ------------------------------ SONS ----------------------------------
 def tocar_efeito(nome):
-    """Efeitos sonoros curtos, gerados na hora (não precisam de arquivo).
-    'ativar' = começou a ouvir; 'concluir' = entendeu o que você disse."""
+    """Efeitos curtos gerados na hora. 'ativar' = começou a ouvir; 'concluir' = entendeu."""
     taxa = 22050
     if nome == "ativar":
         f_ini, f_fim, duracao = 880, 1320, 0.14
     elif nome == "concluir":
         f_ini, f_fim, duracao = 1320, 880, 0.12
+    elif nome == "alerta":                       # lembretes: dois toques ascendentes
+        tocar_efeito("ativar")
+        f_ini, f_fim, duracao = 1000, 1500, 0.2
     else:
         return
     n = int(taxa * duracao)
@@ -345,9 +379,8 @@ def tocar_efeito(nome):
     sd.wait()
 
 
-# Som sutil de "processando": um tique discreto que se repete enquanto a IA
-# pensa. Para antes da fala começar (e nunca toca durante a gravação, para
-# não ser captado pelo microfone).
+# Tique sutil de "processando" enquanto a IA pensa. Para antes da fala começar
+# e nunca toca durante a gravação (para o microfone não captar).
 _processando = threading.Event()
 
 
@@ -363,13 +396,13 @@ def _tique(frequencia):
 def _loop_processando():
     alternar = True
     while _processando.is_set():
-        _tique(1600 if alternar else 2000)  # dois tons alternados: "máquina trabalhando"
+        _tique(1600 if alternar else 2000)
         alternar = not alternar
         time.sleep(0.7)
 
 
 def iniciar_som_processando():
-    if _processando.is_set():
+    if not config.SOM_PROCESSANDO or _processando.is_set():
         return
     _processando.set()
     threading.Thread(target=_loop_processando, daemon=True).start()
@@ -377,151 +410,3 @@ def iniciar_som_processando():
 
 def parar_som_processando():
     _processando.clear()
-
-
-def resposta_direta_horario(pergunta):
-    """Perguntas de hora/data são respondidas pela própria ferramenta, sem
-    passar pelo modelo (que, sendo pequeno, às vezes repete uma hora antiga
-    do histórico). Devolve None se não for pergunta de hora."""
-    padrao = re.compile(
-        r"(que horas|que hora|horas s[aã]o|qual (é |e )?a hora|hora (é|e) agora"
-        r"|que dia (é|e) hoje|qual (é |e )?a data|data de hoje)",
-        re.IGNORECASE,
-    )
-    if padrao.search(pergunta):
-        import ferramentas_externas
-        return ferramentas_externas.obter_data_hora()
-    return None
-
-
-def falar(texto, idioma="pt"):
-    """Fala o texto com a voz neural do Piper no idioma pedido."""
-    if idioma not in vozes:
-        idioma = "pt"
-    if idioma == "pt":
-        for escrita, som in PRONUNCIAS_PT.items():
-            texto = re.sub(rf"\b{re.escape(escrita)}\b", som, texto, flags=re.IGNORECASE)
-
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as arquivo:
-        vozes[idioma].synthesize_wav(texto, arquivo)
-    buffer.seek(0)
-
-    with wave.open(buffer, "rb") as arquivo:
-        taxa = arquivo.getframerate()
-        audio = np.frombuffer(arquivo.readframes(arquivo.getnframes()), dtype=np.int16)
-    audio = aplicar_efeito_jarvis(audio, taxa)
-    sd.play(audio, taxa)
-    sd.wait()
-
-
-def idioma_da_resposta(idioma_entrada):
-    """Define em que idioma a Ethos AI vai FALAR a resposta."""
-    modo = estado["modo"]
-    if modo == "ingles":
-        return "en"
-    if modo == "tradutor":
-        return "en" if idioma_entrada == "pt" else "pt"  # traduz para o outro idioma
-    return "pt"
-
-
-# ------------------------------ RESPONDER -----------------------------
-def responder(pergunta, idioma_entrada):
-    historico = estado["historico"]
-    historico.append({"role": "user", "content": pergunta})
-    resposta = ""
-    inicio = time.time()
-    primeira_palavra = None
-
-    # /no_think no FIM da última mensagem: além do parâmetro think=False (que
-    # o Ollama às vezes ignora com o Qwen3 — bug conhecido), essa é a forma
-    # que o próprio Qwen foi treinado para obedecer de verdade. Só entra no
-    # que é mandado pro modelo; o histórico salvo continua limpo.
-    mensagens_envio = historico[:-1] + [
-        {"role": "user", "content": pergunta + "\n\n/no_think"}
-    ]
-
-    # Junta a resposta inteira ANTES de mostrar na tela: assim o pensamento
-    # (com ou sem tag de abertura) nunca aparece, nem na tela nem na fala.
-    # O preço é não ver o texto "digitando" em tempo real no terminal.
-    for pedaco in ollama.chat(
-        model=MODELO_IA,
-        messages=mensagens_envio,
-        stream=True,
-        think=False,
-        keep_alive="30m",  # mantém o modelo na memória entre as perguntas
-    ):
-        if primeira_palavra is None:
-            primeira_palavra = time.time() - inicio
-        resposta += pedaco["message"]["content"]
-
-    resposta = remover_pensamento(resposta)
-    print(f"ETHOS  > {resposta}\n")
-    print(
-        f"⏱ IA: {primeira_palavra:.1f}s até a 1ª palavra, "
-        f"{time.time() - inicio:.1f}s no total"
-    )
-    historico.append({"role": "assistant", "content": resposta})
-
-    # A "Dica:" (em português) só aparece na tela, não é lida pela voz em inglês
-    fala = resposta.split("Dica:")[0].strip()
-
-    inicio = time.time()
-    falar(fala, idioma_da_resposta(idioma_entrada))
-    print(f"⏱ fala: {time.time() - inicio:.1f}s\n")
-
-
-# -------------------------------- MAIN --------------------------------
-def mostrar_ajuda():
-    print("  /conversa  bate-papo em português")
-    print("  /ingles    treino de inglês (você fala inglês, ela corrige)")
-    print("  /tradutor  tradução português <-> inglês")
-    print("  ENTER      falar | ou digite o texto | 'sair' encerra\n")
-
-
-def main():
-    trocar_modo("conversa")
-    print("=" * 58)
-    print("  ETHOS AI online.")
-    print("=" * 58)
-    mostrar_ajuda()
-    falar("Ethos AI online. Como posso ajudar?")
-
-    while True:
-        entrada = input(f"[{estado['modo']}] ENTER para falar (ou digite): ").strip()
-
-        if entrada.lower() in ("sair", "exit", "quit"):
-            falar("Encerrando sistemas. Até logo.")
-            break
-
-        if entrada.lower() in ("/ajuda", "/help"):
-            mostrar_ajuda()
-            continue
-
-        if entrada.startswith("/") and entrada[1:].lower() in MODOS:
-            novo = entrada[1:].lower()
-            trocar_modo(novo)
-            idioma_aviso, frase = MODOS[novo]["aviso"]
-            print(f"ETHOS  > {frase}\n")
-            falar(frase, idioma_aviso)
-            continue
-
-        if entrada:
-            pergunta = entrada
-            # texto digitado: tenta adivinhar o idioma só para o modo tradutor
-            idioma = "en" if re.search(r"\b(the|is|are|you|and|what|how)\b", entrada, re.I) else "pt"
-            if estado["modo"] == "ingles":
-                idioma = "en"
-        else:
-            pergunta, idioma = ouvir()
-
-        if not pergunta:
-            print("(não entendi nada, tente de novo)\n")
-            continue
-
-        print(f"VOCÊ   > {pergunta}")
-        responder(pergunta, idioma)
-
-
-if __name__ == "__main__":
-    main()

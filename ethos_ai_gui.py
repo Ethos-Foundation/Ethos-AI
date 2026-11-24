@@ -23,12 +23,14 @@ import lembretes
 import memoria
 import orbe
 import preferencias
+import registro
 import texto
+from aba_memoria import AbaMemoria
 from orquestrador import Orquestrador
 from pet import Pet
 
 BG, PAINEL, FG, DIM, LINHA = "#131418", "#1a1b20", "#eef0f5", "#7d818c", "#2a2c33"
-NOMES = {"carregando": "CARREGANDO", "espera": "EM ESPERA", "ouvindo": "OUVINDO",
+NOMES = {"carregando": "CARREGANDO", "espera": "EM ESPERA", "ouvindo": "OUVINDO", "olhando": "OLHANDO A TELA",
          "pensando": "PROCESSANDO", "falando": "FALANDO"}
 ARQUIVO_CHAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat_ethos.json")
 MAX_CHAT = 80     # quantas mensagens do histórico visual são lembradas entre aberturas
@@ -41,6 +43,7 @@ def enviar(**msg):
 
 
 orq = Orquestrador(enviar, ethos)   # toda a lógica de conversa vive aqui
+vigia = registro.VigiaDeTravamento()   # anota no ethos.log se a janela travar
 
 
 def pre_carregar():
@@ -71,9 +74,10 @@ class App:
         raiz.geometry("560x820")
         raiz.minsize(440, 560)
         raiz.protocol("WM_DELETE_WINDOW", self.ao_fechar)
-        self.tela_cheia = False
-        raiz.bind("<F11>", self.alternar_tela_cheia)
-        raiz.bind("<Escape>", self.sair_tela_cheia)
+        raiz.bind("<F11>", self.alternar_maximizada)
+        raiz.bind("<Control-q>", lambda e: self.sair())
+        if self.prefs.get("sarcasmo") is not None:
+            cerebro.definir_sarcasmo(self.prefs["sarcasmo"])
 
         estilo = ttk.Style()
         estilo.theme_use("clam")
@@ -83,10 +87,13 @@ class App:
 
         abas = ttk.Notebook(raiz)
         abas.pack(fill="both", expand=True)
-        aba_conversa, aba_ajuda = tk.Frame(abas, bg=BG), tk.Frame(abas, bg=BG)
+        aba_conversa, aba_memoria, aba_ajuda = tk.Frame(abas, bg=BG), tk.Frame(abas, bg=BG), tk.Frame(abas, bg=BG)
         abas.add(aba_conversa, text="CONVERSA")
+        abas.add(aba_memoria, text="MEMÓRIA")
         abas.add(aba_ajuda, text="AJUDA")
         self._montar_conversa(aba_conversa)
+        self.aba_memoria = AbaMemoria(aba_memoria, self.botao, (BG, PAINEL, FG, DIM, LINHA))
+        abas.bind("<<NotebookTabChanged>>", lambda e: self.aba_memoria.atualizar())
         self._montar_ajuda(aba_ajuda)
 
         for item in self.registro:
@@ -101,6 +108,12 @@ class App:
 
         self.animar()
         self.ler_fila()
+        self._batida()
+
+    def _batida(self):
+        """Avisa o vigia que a janela está viva (se isto parar, o ethos.log anota onde travou)."""
+        vigia.batida()
+        self.raiz.after(500, self._batida)
 
     # ------------------------------------------------------------ layout
     def botao(self, pai, rotulo, comando):
@@ -143,18 +156,12 @@ class App:
         tk.Label(info, text="E T H O S   A I", bg=BG, fg=FG, font=("Segoe UI", 12)).pack(anchor="w")
         self.st = tk.Label(info, text="EM ESPERA", bg=BG, fg=DIM, font=("Segoe UI", 9))
         self.st.pack(anchor="w", pady=(0, 6))
-        modos = tk.Frame(info, bg=BG)
-        modos.pack(anchor="w")
-        self.botoes = {}
-        for nome, rotulo in (("conversa", "CONVERSA"), ("ingles", "INGLÊS"), ("tradutor", "TRADUTOR")):
-            self.botoes[nome] = self.botao(modos, rotulo, lambda n=nome: orq.acao("modo", n))
-            self.botoes[nome].pack(side="left", padx=(0, 5))
-        self.marcar("conversa")
         extras = tk.Frame(info, bg=BG)
-        extras.pack(anchor="w", pady=(6, 0))
+        extras.pack(anchor="w", pady=(4, 0))
         self.botao_pet = self.botao(extras, "PET", self.alternar_pet)
         self.botao_pet.pack(side="left", padx=(0, 5))
         self.botao(extras, "LIMPAR CHAT", self.limpar_chat).pack(side="left", padx=5)
+        self.botao(extras, "SAIR", self.sair).pack(side="left", padx=5)
 
         corpo = tk.Frame(aba, bg=BG)
         corpo.pack(side="top", fill="both", expand=True, padx=12, pady=(4, 4))
@@ -224,13 +231,19 @@ class App:
         item("Ctrl+Alt+C", "Liga/desliga a conversa contínua.")
         item("Ctrl+Alt+Q", "Corta a fala dela.")
 
+        titulo("MEMÓRIA (aba MEMÓRIA)")
+        item("Ver e editar", "Tudo que ela sabe fica numa lista: adicione, edite (duplo clique) ou remova. "
+                             "'Remover duplicados' junta itens repetidos. Ela avisa no chat quando anota algo sozinha.")
+
         titulo("COMANDOS DIGITADOS")
-        item("/conversa /ingles /tradutor", "Troca o modo de conversa.")
+        item("/sarcasmo 0 a 3", "Intensidade do sarcasmo: 0 nenhum, 1 leve (padrão), 2 médio, 3 alto.")
+        item("/log", "Mostra as últimas linhas do ethos.log (para me mandar em caso de problema).")
         item("/memoria", "Mostra tudo que ela guardou.")
         item("/corrigir A = B", "Ensina uma correção de voz. Ex.: /corrigir e maio = e-mail")
         item("/lembretes", "Lista os lembretes agendados.")
         item("/limpar", "Limpa o chat.")
-        item("F11 / Esc", "Tela cheia / sair da tela cheia.")
+        item("F11", "Maximiza / restaura a janela.")
+        item("Ctrl+Q ou SAIR", "Encerra a Ethos de vez.")
 
         titulo("O QUE ELA FAZ SOZINHA")
         item("Data e hora", "'Que horas são?', 'que dia é hoje?'")
@@ -365,17 +378,22 @@ class App:
             self.limpar_chat()
         elif baixo == "/lembretes":
             self._sistema(ferramentas_lembretes.listar_lembretes())
-        elif baixo in ("/conversa", "/ingles", "/tradutor"):
-            orq.acao("modo", baixo[1:])
+        elif baixo.startswith("/sarcasmo"):
+            arg = txt[len("/sarcasmo"):].strip()
+            if arg in ("0", "1", "2", "3"):
+                nivel = cerebro.definir_sarcasmo(int(arg))
+                self.prefs["sarcasmo"] = nivel
+                preferencias.salvar(self.prefs)
+                self._sistema(f"Sarcasmo no nível {nivel} (0 = nenhum, 3 = alto).")
+            else:
+                self._sistema(f"Use: /sarcasmo 0, 1, 2 ou 3. Agora está em {config.NIVEL_SARCASMO}.")
+        elif baixo == "/log":
+            self._sistema(registro.ultimas_linhas(30))
         else:
             orq.acao("texto", txt)
         return "break"
 
     # ------------------------------------------------ botões e janela
-    def marcar(self, modo):
-        for nome, b in self.botoes.items():
-            b.config(highlightbackground=FG if nome == modo else LINHA)
-
     def _atualizar_botoes(self):
         self.botao_voz.config(text="VOZ: LIGADA" if orq.falar_respostas else "VOZ: MUDA",
                               highlightbackground=FG if orq.falar_respostas else LINHA)
@@ -393,14 +411,12 @@ class App:
         self.pet.esconder() if self.pet.visivel else self.pet.mostrar()
         self._atualizar_botoes()
 
-    def alternar_tela_cheia(self, _e=None):
-        self.tela_cheia = not self.tela_cheia
-        self.raiz.attributes("-fullscreen", self.tela_cheia)
-
-    def sair_tela_cheia(self, _e=None):
-        if self.tela_cheia:
-            self.tela_cheia = False
-            self.raiz.attributes("-fullscreen", False)
+    def alternar_maximizada(self, _e=None):
+        """F11: maximiza/restaura. (Não usamos tela cheia de verdade: ela prendia a janela.)"""
+        try:
+            self.raiz.state("normal" if self.raiz.state() == "zoomed" else "zoomed")
+        except tk.TclError:
+            pass
 
     def abrir_janela(self):
         self.raiz.deiconify()
@@ -434,8 +450,8 @@ class App:
             self._conteudo(m["conteudo"])
         if m.get("fim"):
             self._fim()
-        if "modo" in m:
-            self.marcar(m["modo"])
+        if m.get("recuar"):
+            self.raiz.lower()            # deixa o navegador/app que ela abriu aparecer na frente
         if "continuo" in m:
             self.botao_continuo.config(highlightbackground=FG if m["continuo"] else LINHA,
                                        text="∞ CONTÍNUO: LIGADO" if m["continuo"] else "∞ CONTÍNUO")
@@ -474,6 +490,8 @@ def iniciar_atalho_global():
 
 
 if __name__ == "__main__":
+    registro.iniciar()
+    vigia.iniciar()
     cerebro.trocar_modo("conversa")
     raiz = tk.Tk()
     app = App(raiz)

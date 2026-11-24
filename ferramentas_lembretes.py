@@ -5,15 +5,16 @@ import re
 
 import lembretes
 import tempo
+from texto import Falha
 
-_AJUDA_QUANDO = ("Não entendi quando. Diga, por exemplo, 'daqui a 20 minutos', 'amanhã às 9h' "
+_AJUDA_QUANDO = Falha("Não entendi quando. Diga, por exemplo, 'daqui a 20 minutos', 'amanhã às 9h' "
                  "ou 'toda segunda às 8h'.")
 
 
 def criar_lembrete(texto, quando):
     texto = (texto or "").strip()
     if not texto:
-        return "Preciso saber do que lembrar."
+        return Falha("Preciso saber do que lembrar.")
     r = tempo.interpretar_quando(quando or "")
     if r is None and re.match(r"\d{4}-\d{2}-\d{2}", (quando or "").strip()):
         try:
@@ -87,4 +88,4 @@ def executar(nome, args):
     try:
         return _FUNCOES[nome](**args)
     except Exception as erro:
-        return f"Erro ao executar {nome}: {erro}"
+        return Falha(f"Erro ao executar {nome}: {erro}")

@@ -4,13 +4,16 @@ Guarda tudo num arquivo JSON simples (memoria_ethos.json) na mesma pasta.
 """
 
 import datetime
+import difflib
 import json
 import os
 import random
 import re
 import threading
+import unicodedata
 
 import config
+from texto import Falha
 
 ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memoria_ethos.json")
 
@@ -39,10 +42,70 @@ memoria = carregar()
 
 
 # ------------------------------ ações ------------------------------
-def salvar_fato(chave, valor):
-    memoria["fatos"][chave.lower().strip()] = valor
+def _norm(txt):
+    """Minúsculas, sem acento e sem pontuação, para comparar textos."""
+    txt = unicodedata.normalize("NFKD", str(txt).lower())
+    txt = "".join(c for c in txt if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", txt)).strip()
+
+
+def parecidos(a, b, limite=0.85):
+    """True se os dois textos dizem praticamente a mesma coisa."""
+    na, nb = _norm(a), _norm(b)
+    return na == nb or difflib.SequenceMatcher(None, na, nb).ratio() >= limite
+
+
+def _dias_entre(d1, d2):
+    try:
+        return abs((datetime.date.fromisoformat(d1) - datetime.date.fromisoformat(d2)).days)
+    except ValueError:
+        return 0
+
+
+def guardar_fato(chave, valor):
+    """Guarda um fato. Devolve True se gravou; False se já estava anotado (mesmo sob outra chave)."""
+    chave, valor = chave.lower().strip(), str(valor).strip()
+    if any(parecidos(v, valor) for v in memoria["fatos"].values()):
+        return False
+    memoria["fatos"][chave] = valor
     salvar(memoria)
-    return f"Anotado: {chave} = {valor}."
+    return True
+
+
+def guardar_evento(texto, data=None):
+    """Guarda um evento com data. Devolve False se um evento parecido já existe (até 14 dias de diferença)."""
+    data = data or datetime.date.today().isoformat()
+    for e in memoria["eventos"]:
+        if parecidos(e["texto"], texto) and _dias_entre(e["data"], data) <= 14:
+            return False
+    memoria["eventos"].append({"data": data, "texto": texto})
+    memoria["eventos"].sort(key=lambda e: e["data"])
+    salvar(memoria)
+    return True
+
+
+def guardar_giria(termo, significado):
+    termo = termo.lower().strip()
+    if memoria["girias"].get(termo) == significado:
+        return False
+    memoria["girias"][termo] = significado
+    salvar(memoria)
+    return True
+
+
+def guardar_dialeto(termo, significado):
+    termo = termo.lower().strip()
+    if memoria["dialeto"].get(termo) == significado:
+        return False
+    memoria["dialeto"][termo] = significado
+    salvar(memoria)
+    return True
+
+
+def salvar_fato(chave, valor):
+    if guardar_fato(chave, valor):
+        return f"Anotado: {chave} = {valor}."
+    return f"Já estava anotado: {valor}."
 
 
 def esquecer_fato(chave):
@@ -52,15 +115,13 @@ def esquecer_fato(chave):
 
 
 def aprender_giria(termo, significado):
-    memoria["girias"][termo.lower().strip()] = significado
-    salvar(memoria)
+    guardar_giria(termo, significado)
     return f"Aprendido: '{termo}' significa '{significado}'."
 
 
 def aprender_dialeto(termo, significado):
     """Guarda uma expressão que a própria Ethos inventou."""
-    memoria["dialeto"][termo.lower().strip()] = significado
-    salvar(memoria)
+    guardar_dialeto(termo, significado)
     return f"Expressão própria registrada: '{termo}' = {significado}."
 
 
@@ -99,11 +160,10 @@ def remover_tarefa(id_tarefa):
 
 def registrar_evento(texto, data=None):
     """Guarda algo que aconteceu/foi feito, com a data (padrão: hoje)."""
-    data = (data or datetime.date.today().isoformat())
-    memoria["eventos"].append({"data": data, "texto": texto})
-    memoria["eventos"].sort(key=lambda e: e["data"])
-    salvar(memoria)
-    return f"Anotado em {data}: {texto}."
+    data = data or datetime.date.today().isoformat()
+    if guardar_evento(texto, data):
+        return f"Anotado em {data}: {texto}."
+    return f"Já estava anotado: {texto}."
 
 
 def consultar_eventos(data_inicio=None, data_fim=None):
@@ -119,6 +179,117 @@ def consultar_eventos(data_inicio=None, data_fim=None):
     if not eventos:
         return "Não encontrei nenhum evento registrado nesse período."
     return "; ".join(f"{e['data']}: {e['texto']}" for e in eventos)
+
+
+# --------------- gerenciamento (aba MEMÓRIA da janela) ---------------
+TIPOS = {"fato": "Fato", "evento": "Evento", "giria": "Gíria sua", "dialeto": "Dialeto dela",
+         "correcao": "Correção de voz", "tarefa": "Tarefa"}
+
+
+def listar_tudo():
+    """Todos os itens como dicts: tipo, id (para editar/remover), chave e valor."""
+    itens = [{"tipo": "fato", "id": k, "chave": k, "valor": v} for k, v in memoria["fatos"].items()]
+    itens += [{"tipo": "evento", "id": i, "chave": e["data"], "valor": e["texto"]}
+              for i, e in enumerate(memoria["eventos"])]
+    itens += [{"tipo": "giria", "id": k, "chave": k, "valor": v} for k, v in memoria["girias"].items()]
+    itens += [{"tipo": "dialeto", "id": k, "chave": k, "valor": v} for k, v in memoria["dialeto"].items()]
+    itens += [{"tipo": "correcao", "id": k, "chave": k, "valor": v} for k, v in memoria["correcoes"].items()]
+    itens += [{"tipo": "tarefa", "id": t["id"], "chave": "feita" if t["feita"] else "pendente", "valor": t["texto"]}
+              for t in memoria["tarefas"]]
+    return itens
+
+
+_DICTS = {"fato": "fatos", "giria": "girias", "dialeto": "dialeto", "correcao": "correcoes"}
+
+
+def adicionar_item(tipo, chave, valor):
+    """Adiciona manualmente (sem checar duplicata). Devolve (ok, mensagem)."""
+    chave, valor = str(chave).strip(), str(valor).strip()
+    if tipo not in TIPOS or not valor or (tipo != "tarefa" and not chave):
+        return False, "Preencha os dois campos."
+    with _trava:
+        if tipo in _DICTS:
+            memoria[_DICTS[tipo]][chave.lower()] = valor
+        elif tipo == "evento":
+            try:
+                datetime.date.fromisoformat(chave)
+            except ValueError:
+                return False, "A data do evento deve ser AAAA-MM-DD (ex.: 2026-11-20)."
+            memoria["eventos"].append({"data": chave, "texto": valor})
+            memoria["eventos"].sort(key=lambda e: e["data"])
+        else:
+            novo_id = max((t["id"] for t in memoria["tarefas"]), default=0) + 1
+            memoria["tarefas"].append({"id": novo_id, "texto": valor, "feita": chave.lower() == "feita"})
+        salvar(memoria)
+    return True, "Adicionado."
+
+
+def remover_item(tipo, id_item):
+    with _trava:
+        if tipo in _DICTS:
+            ok = memoria[_DICTS[tipo]].pop(id_item, None) is not None
+        elif tipo == "evento":
+            ok = 0 <= id_item < len(memoria["eventos"])
+            if ok:
+                del memoria["eventos"][id_item]
+        else:
+            antes = len(memoria["tarefas"])
+            memoria["tarefas"] = [t for t in memoria["tarefas"] if t["id"] != id_item]
+            ok = len(memoria["tarefas"]) < antes
+        salvar(memoria)
+    return ok
+
+
+def editar_item(tipo, id_item, chave, valor):
+    """Troca um item existente pelos novos valores. Devolve (ok, mensagem)."""
+    chave, valor = str(chave).strip(), str(valor).strip()
+    if tipo not in TIPOS or not valor or (tipo != "tarefa" and not chave):
+        return False, "Preencha os dois campos."
+    with _trava:
+        if tipo in _DICTS:
+            d = memoria[_DICTS[tipo]]
+            if id_item not in d:
+                return False, "Item não encontrado."
+            del d[id_item]
+            d[chave.lower()] = valor
+        elif tipo == "evento":
+            if not (0 <= id_item < len(memoria["eventos"])):
+                return False, "Item não encontrado."
+            try:
+                datetime.date.fromisoformat(chave)
+            except ValueError:
+                return False, "A data do evento deve ser AAAA-MM-DD (ex.: 2026-11-20)."
+            memoria["eventos"][id_item] = {"data": chave, "texto": valor}
+            memoria["eventos"].sort(key=lambda e: e["data"])
+        else:
+            tarefa = next((t for t in memoria["tarefas"] if t["id"] == id_item), None)
+            if tarefa is None:
+                return False, "Item não encontrado."
+            tarefa["texto"], tarefa["feita"] = valor, chave.lower() == "feita"
+        salvar(memoria)
+    return True, "Salvo."
+
+
+def remover_duplicados():
+    """Junta itens que dizem a mesma coisa. Devolve quantos foram removidos por tipo."""
+    removidos = {"eventos": 0, "fatos": 0}
+    with _trava:
+        mantidos = []
+        for e in sorted(memoria["eventos"], key=lambda e: e["data"]):
+            if any(parecidos(e["texto"], m["texto"]) and _dias_entre(e["data"], m["data"]) <= 14 for m in mantidos):
+                removidos["eventos"] += 1
+            else:
+                mantidos.append(e)
+        memoria["eventos"] = mantidos
+        fatos = {}
+        for k, v in memoria["fatos"].items():
+            if any(parecidos(v, outro) for outro in fatos.values()):
+                removidos["fatos"] += 1
+            else:
+                fatos[k] = v
+        memoria["fatos"] = fatos
+        salvar(memoria)
+    return removidos
 
 
 # -------------------- resumo para a IA "lembrar" --------------------
@@ -268,4 +439,4 @@ def executar(nome, args):
     try:
         return _FUNCOES[nome](**args)
     except Exception as erro:
-        return f"Erro ao executar {nome}: {erro}"
+        return Falha(f"Erro ao executar {nome}: {erro}")

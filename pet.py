@@ -147,8 +147,8 @@ class Pet:
         self.janela.after(33, self._animar)
 
     def _manter_no_topo(self):
-        """Alguns programas passam por cima; reafirma 'sempre no topo' de tempos em tempos."""
+        """Reafirma 'sempre no topo' de vez em quando, sem forçar a janela para a frente
+        (o lift() repetido atrapalhava as outras janelas)."""
         if self.visivel:
             self.janela.attributes("-topmost", True)
-            self.janela.lift()
-        self.janela.after(4000, self._manter_no_topo)
+        self.janela.after(15000, self._manter_no_topo)

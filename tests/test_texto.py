@@ -109,6 +109,45 @@ class TestComandos(unittest.TestCase):
             self.assertIsNone(self.cmd(f), f)
 
 
+class TestArquivosEPastas(unittest.TestCase):
+    def test_extrair_conteudo(self):
+        self.assertEqual(texto.extrair_conteudo("Pronto.---CONTEUDO---\n```python\nprint(1)\n```\n"), "print(1)\n")
+        self.assertEqual(texto.extrair_conteudo("Pronto.---CONTEUDO---\nlinha 1\n  linha 2"), "linha 1\n  linha 2\n")
+
+    def test_extrair_conteudo_sem_marcador_usa_o_bloco_de_codigo(self):
+        self.assertEqual(texto.extrair_conteudo("Aqui está:\n```py\nx = 1\n```"), "x = 1\n")
+        self.assertEqual(texto.extrair_conteudo("só conversa"), "")
+
+    def test_nome_de_arquivo(self):
+        self.assertEqual(texto.extrair_nome_arquivo("cria o Fibonacci.py na área de trabalho"), "Fibonacci.py")
+        self.assertEqual(texto.extrair_nome_arquivo("salva como notas ponto txt"), "notas.txt")
+        self.assertEqual(texto.extrair_nome_arquivo("abre o youtube.com"), "")
+
+    def test_destino(self):
+        self.assertEqual(texto.extrair_destino("salva na área de trabalho"), "area de trabalho")
+        self.assertEqual(texto.extrair_destino("coloca em Documentos"), "documentos")
+        self.assertEqual(texto.extrair_destino("em C:\\Users\\Juan\\Projetos\\x"), "C:\\Users\\Juan\\Projetos\\x")
+        self.assertEqual(texto.extrair_destino("na pasta do Calculo"), "calculo")
+        self.assertEqual(texto.extrair_destino("oi tudo bem"), "")
+
+    def test_comandos_de_arquivo(self):
+        n, a = texto.detectar_comando("cria um arquivo fibonacci.py com a sequência na área de trabalho")
+        self.assertEqual((n, a["nome"], a["destino"]), ("criar_arquivo_gerado", "fibonacci.py", "area de trabalho"))
+        n, a = texto.detectar_comando("salva isso como fib.py na pasta documentos")
+        self.assertEqual((n, a["nome"], a["destino"]), ("salvar_ultimo_conteudo", "fib.py", "documentos"))
+        self.assertEqual(texto.detectar_comando("abre a pasta downloads"), ("abrir_pasta", {"destino": "downloads"}))
+        self.assertEqual(texto.detectar_comando("abre minha área de trabalho"), ("abrir_pasta", {"destino": "area de trabalho"}))
+
+    def test_comandos_de_arquivo_nao_disparam_a_toa(self):
+        for f in ("salva na memória que gosto de café", "cria uma história engraçada", "me lembra de salvar isso amanhã às 9h"):
+            self.assertNotIn((texto.detectar_comando(f) or ("",))[0], ("criar_arquivo_gerado", "salvar_ultimo_conteudo"), f)
+
+    def test_falha_e_texto(self):
+        f = texto.Falha("deu ruim")
+        self.assertEqual(f, "deu ruim")
+        self.assertTrue(isinstance(f, texto.Falha) and isinstance(f, str))
+
+
 class TestMensagemErro(unittest.TestCase):
     def test_ollama_fechado(self):
         self.assertIn("Ollama", texto.mensagem_de_erro(ConnectionError("[WinError 10061] recusou")))
@@ -202,16 +241,6 @@ class TestRoteador(unittest.TestCase):
         ev = rotear(["Pronto, já fiz.---CONTEUDO---\ncódigo aqui"])
         self.assertEqual(por_tipo(ev, "frase"), ["Pronto, já fiz."])
         self.assertEqual("".join(por_tipo(ev, "conteudo")), "código aqui")
-
-    def test_dica_nao_e_falada(self):
-        entrada = "Nice to meet you! How are you today? Dica: diga 'I am fine'."
-        for pedacos in ([entrada], list(entrada)):
-            ev = rotear(pedacos)
-            falado = " ".join(por_tipo(ev, "frase"))
-            self.assertIn("How are you today?", falado)
-            self.assertNotIn("Dica", falado)
-            self.assertNotIn("fine", falado)
-            self.assertIn("Dica:", "".join(por_tipo(ev, "tela")))
 
     def test_resposta_curta_sem_pontuacao_final(self):
         ev = rotear(["Claro", ", pode ", "falar"])

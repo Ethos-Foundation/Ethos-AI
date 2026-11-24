@@ -10,6 +10,8 @@ import types
 import unittest
 from unittest import mock
 
+import numpy  # noqa: F401  (carregado antes: o patch de sys.modules não pode descarregá-lo)
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -104,6 +106,51 @@ class TestGuiFumaca(unittest.TestCase):
             self.app._tratar({"token": "Boa noite, meu caro."})
             self.app._tratar({"fim": True})
         m.assert_called_once_with("Boa noite, meu caro.")
+
+    def test_comando_sarcasmo(self):
+        import cerebro, config
+        self.addCleanup(lambda: cerebro.definir_sarcasmo(1))
+        self.tk._texto.get.return_value = "/sarcasmo 3"
+        self.app.enviar_entrada()
+        self.assertEqual(config.NIVEL_SARCASMO, 3)
+        self.assertEqual(self.app.prefs["sarcasmo"], 3)
+        self.tk._texto.get.return_value = "/sarcasmo 9"
+        self.app.enviar_entrada()
+        self.assertEqual(config.NIVEL_SARCASMO, 3)                # valor inválido é recusado
+
+    def test_comando_log_nao_quebra(self):
+        self.tk._texto.get.return_value = "/log"
+        self.app.enviar_entrada()
+
+    def test_modos_de_idioma_foram_removidos(self):
+        self.assertFalse(hasattr(self.app, "botoes"))
+        self.tk._texto.get.return_value = "/ingles"
+        with mock.patch.object(self.gui.orq, "acao") as acao:
+            self.app.enviar_entrada()
+        acao.assert_called_once_with("texto", "/ingles")           # agora é só texto comum
+
+    def test_recuar_manda_a_janela_para_tras(self):
+        self.app._tratar({"recuar": True})
+        self.app.raiz.lower.assert_called()
+
+    def test_status_olhando(self):
+        self.app._tratar({"estado": "olhando"})
+        self.app.st.config.assert_called_with(text="OLHANDO A TELA")
+
+    def test_maximizar_e_sair(self):
+        self.app.alternar_maximizada()
+        self.app.raiz.state.assert_called()
+        self.app.sair()
+        self.app.raiz.destroy.assert_called()
+
+    def test_aba_memoria_lista_e_remove(self):
+        self.memoria.memoria["fatos"]["curso"] = "engenharia"
+        self.app.aba_memoria.filtro = mock.Mock(get=lambda: "Tudo")   # o tkinter falso não guarda valores
+        self.app.aba_memoria.busca = mock.Mock(get=lambda: "")
+        self.app.aba_memoria.atualizar()
+        self.assertTrue(any(i["tipo"] == "fato" for i in self.app.aba_memoria._itens.values()))
+        self.app.aba_memoria.remover()                           # sem seleção: só avisa
+        self.app.aba_memoria.remover_duplicados()
 
     def test_pet_clique_e_arrasto(self):
         pet = self.app.pet

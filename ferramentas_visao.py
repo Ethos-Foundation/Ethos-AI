@@ -1,6 +1,7 @@
 """Ferramenta de visão para a Ethos: olhar a tela do usuário."""
 
 import visao
+from texto import Falha
 
 
 def ver_tela(pergunta=""):
@@ -27,4 +28,4 @@ def executar(nome, args):
     try:
         return _FUNCOES[nome](**args)
     except Exception as erro:
-        return f"Erro ao executar {nome}: {erro}"
+        return Falha(f"Erro ao executar {nome}: {erro}")

@@ -14,6 +14,10 @@ import sys
 import tempfile
 
 import config
+from texto import Falha
+
+# A janela registra aqui uma função(nome_do_evento): 'capturando' | 'capturada'
+ao_evento = None
 
 PROMPT_VISAO = (
     "Você descreve capturas de tela para um assistente de voz. Responda em português do "
@@ -80,22 +84,33 @@ def analisar_imagem(jpeg, pergunta="", modelo=None):
     except Exception as erro:
         t = str(erro).lower()
         if "not found" in t:
-            return f"O modelo de visão {modelo} não está instalado. Rode no terminal: ollama pull {modelo}"
+            return Falha(f"O modelo de visão {modelo} não está instalado. Rode no terminal: ollama pull {modelo}")
         if any(p in t for p in ("connect", "10061", "refused")):
-            return "Não consegui falar com o Ollama para olhar a tela. Ele está aberto?"
-        return f"Não consegui analisar a tela: {erro}"
+            return Falha("Não consegui falar com o Ollama para olhar a tela. Ele está aberto?")
+        return Falha(f"Não consegui analisar a tela: {erro}")
     descricao = texto.remover_pensamento(resposta["message"]["content"] or "")
-    return descricao[:1800] or "O modelo de visão não devolveu nenhuma descrição."
+    return descricao[:1800] or Falha("O modelo de visão não devolveu nenhuma descrição.")
+
+
+def _evento(nome):
+    if ao_evento:
+        try:
+            ao_evento(nome)
+        except Exception:
+            pass
 
 
 def olhar_tela(pergunta=""):
-    """Captura a tela agora e a analisa."""
+    """Captura a tela agora e a analisa. Avisa a janela quando captura (som e status), para você
+    saber que já pode voltar ao que estava fazendo."""
     try:
+        _evento("capturando")
         jpeg = capturar_tela()
+        _evento("capturada")
     except ImportError:
-        return "Falta a biblioteca Pillow para capturar a tela. Rode: pip install Pillow"
+        return Falha("Falta a biblioteca Pillow para capturar a tela. Rode: pip install Pillow")
     except Exception as erro:
-        return f"Não consegui capturar a tela: {erro}"
+        return Falha(f"Não consegui capturar a tela: {erro}")
     return analisar_imagem(jpeg, pergunta)
 
 

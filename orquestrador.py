@@ -10,7 +10,7 @@ Mensagens enviadas à interface:
   fim=True        a resposta terminou
   voce=texto      aviso do sistema (erro, "carregando...")
   estado=...      espera | ouvindo | pensando | falando
-  modo=..., continuo=bool
+  continuo=bool, recuar=True (janela passa para trás)
 """
 
 import queue
@@ -19,8 +19,11 @@ import time
 
 import cerebro
 import config
+import ferramentas_sistema
 import lembretes
 import texto
+import visao
+from registro import log
 
 
 class LocutorMudo:
@@ -43,6 +46,10 @@ class Orquestrador:
         self.parar_gravacao_agora = False
         self.falar_respostas = True           # False = chat só de texto
         self.alertas = queue.Queue()          # lembretes vencidos esperando ela ficar livre
+        # ligações com as ferramentas: abrir algo -> a janela recua; ver a tela -> som e status
+        ferramentas_sistema.ao_abrir = lambda: self.ui(recuar=True)
+        visao.ao_evento = self._evento_visao
+        cerebro.notificar = lambda msg: self.ui(voce=msg)
 
     def _whisper_pronto(self):
         """Se o reconhecimento de voz ainda está carregando, avisa em vez de ficar mudo."""
@@ -51,9 +58,23 @@ class Orquestrador:
             self.ui(voce="Ainda carregando o reconhecimento de voz, um instante...")
         return pronto
 
+    def _evento_visao(self, nome):
+        """Retorno para você quando ela olha a tela: a janela recua, toca o 'clique' e avisa."""
+        if nome == "capturando":
+            self.ui(estado="olhando", recuar=True)
+            time.sleep(0.5)               # dá tempo da janela da Ethos sair da frente
+        elif nome == "capturada":
+            self.voz.tocar_efeito("captura")
+            self.ui(voce="Capturei a tela. Pode voltar ao que estava fazendo, estou analisando.", estado="pensando")
+
     def _erro(self, erro):
         msg = texto.mensagem_de_erro(erro, config.MODELO_IA)
         print(f"⚠ {erro!r}")
+        log.error("erro: %r", erro)
+        try:
+            self.voz.tocar_efeito("erro")
+        except Exception:
+            pass
         self.ui(voce=msg)
         if self.falar_respostas:
             try:
@@ -108,6 +129,10 @@ class Orquestrador:
 
         print(f"⏱ 1º texto do modelo em {marcos.get('modelo', 0):.1f}s, "
               f"fala começou em {marcos.get('fala', 0):.1f}s, total {time.time() - inicio:.1f}s")
+        log.info("tempos: 1º texto %.1fs, fala %.1fs, total %.1fs", marcos.get("modelo", 0),
+                 marcos.get("fala", 0), time.time() - inicio)
+        for aviso in cerebro.pegar_avisos():          # ex.: onde um arquivo foi salvo
+            self.ui(voce=aviso)
 
     # ------------------------------ lembretes ---------------------------
     def anunciar(self, lembrete, atrasado=False):
@@ -178,7 +203,7 @@ class Orquestrador:
             return
         self.ui(continuo=True)
         try:
-            self.voz.tocar_efeito("ativar")
+            self.voz.tocar_efeito("ligar")
             while self.conversa_ativa.is_set():
                 self._falar_alertas_pendentes()
                 self.ui(estado="ouvindo")
@@ -199,6 +224,10 @@ class Orquestrador:
             self.conversa_ativa.clear()
             self.voz.parar_som_processando()
             self.ui(estado="espera", continuo=False, fim=True)
+            try:
+                self.voz.tocar_efeito("desligar")
+            except Exception:
+                pass
             self.ocupado.release()
             # fim da conversa: revisa o que sobrou e anota o que for importante
             threading.Thread(target=cerebro.curar_memoria, daemon=True).start()
@@ -236,14 +265,6 @@ class Orquestrador:
                     self.voz.tocar_efeito("concluir")
             elif acao == "texto":
                 pergunta, idioma = dados, "pt"
-            elif acao == "modo":
-                cerebro.trocar_modo(dados)
-                self.ui(modo=dados)
-                idioma_aviso, frase = cerebro.MODOS[dados]["aviso"]
-                self.ui(voce=frase, estado="falando")
-                if self.falar_respostas:
-                    self.voz.falar(frase, idioma_aviso)
-                return
             else:
                 return
             if not pergunta:

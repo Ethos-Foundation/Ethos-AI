@@ -9,7 +9,6 @@ import re
 import config
 
 MARCA_CONTEUDO = "---CONTEUDO---"
-MARCA_DICA = "Dica:"
 
 
 def extrair_frases(buffer, minimo=None):
@@ -95,6 +94,64 @@ def parece_alucinacao(frase):
     return len(limpa) < 2 or any(a in limpa for a in _ALUCINACOES)
 
 
+class Falha(str):
+    """Resultado de ferramenta que NÃO deu certo. É mostrado ao usuário exatamente como
+    está (o modelo pequeno não pode reescrever e acabar inventando outra coisa)."""
+
+
+def extrair_conteudo(resposta):
+    """Pega o conteúdo depois de '---CONTEUDO---', sem as cercas de código (```)."""
+    if MARCA_CONTEUDO not in resposta:
+        bloco = re.search(r"```[\w+#.-]*\n(.*?)```", resposta, re.DOTALL)
+        return bloco.group(1).rstrip() + "\n" if bloco and bloco.group(1).strip() else ""
+    linhas = resposta.split(MARCA_CONTEUDO, 1)[1].strip("\n").splitlines()
+    while linhas and not linhas[0].strip():
+        linhas.pop(0)
+    if linhas and linhas[0].strip().startswith("```"):
+        linhas.pop(0)
+    while linhas and not linhas[-1].strip():
+        linhas.pop()
+    if linhas and linhas[-1].strip().startswith("```"):
+        linhas.pop()
+    conteudo = "\n".join(linhas).rstrip()
+    return conteudo + "\n" if conteudo else ""
+
+
+_EXTENSOES = ("py|txt|md|json|csv|html|css|js|ts|tsx|jsx|java|c|cpp|h|cs|go|rs|sh|bat|ps1|sql|xml|"
+              "yaml|yml|ini|toml|tex|rtf|docx?|xlsx?|pptx?")
+
+
+def extrair_nome_arquivo(frase):
+    """Primeiro nome de arquivo com extensão (aceita 'fibonacci ponto py' do ditado)."""
+    m = re.search(rf"(?<![\w/\\.])([\w\-]+\.(?:{_EXTENSOES}))\b", frase, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    m = re.search(rf"\b([\w\-]+)\s+ponto\s+({_EXTENSOES})\b", frase, re.IGNORECASE)
+    return f"{m.group(1)}.{m.group(2)}" if m else ""
+
+
+_ALIAS_PASTAS = [
+    ("area de trabalho", r"[áa]rea de trabalho|desktop"), ("documentos", r"documentos"),
+    ("downloads", r"downloads?"), ("imagens", r"imagens|fotos|figuras"),
+    ("musicas", r"m[úu]sicas"), ("videos", r"v[íi]deos"),
+    ("projetos", r"ethos ?projetos|pasta de projetos|meus projetos"),
+]
+
+
+def extrair_destino(frase):
+    """Onde o usuário quer a pasta/arquivo: um caminho (C:\\...), um apelido
+    ('documentos', 'area de trabalho') ou o nome de uma pasta. '' se não disser."""
+    m = re.search(r"\b[a-zA-Z]:\\[^\s,;\"']+", frase)
+    if m:
+        return m.group(0).rstrip(".")
+    p = frase.lower()
+    for nome, padrao in _ALIAS_PASTAS:
+        if re.search(rf"\b(?:{padrao})\b", p):
+            return nome
+    m = re.search(r"\bpasta\s+(?:(?:chamada|de nome|do|da|de|dos|das)\s+)*([\w\-]+)", p)
+    return m.group(1) if m else ""
+
+
 _SITES = "youtube|google|spotify|gmail|github"
 
 
@@ -116,6 +173,19 @@ def detectar_comando(pergunta):
         achado = tempo.extrair_lembrete(bruto)
         if achado:
             return "criar_lembrete", {"texto": achado[0], "quando": achado[1]}
+
+    nome_arq = extrair_nome_arquivo(bruto)
+    if (re.search(r"\b(?:salva|salve|salvar|guarda|guarde|guardar|grava|grave|gravar)\b", p)
+            and re.search(r"\b(?:isso|esse|essa|este|esta|ele|ela|c[oó]digo|texto|arquivo|conte[uú]do|escreveu)\b", p)
+            and not re.search(r"mem[óo]ria|lembrete|contato|n[úu]mero", p)):
+        return "salvar_ultimo_conteudo", {"nome": nome_arq, "destino": extrair_destino(bruto)}
+    if nome_arq and re.search(r"\b(?:cria|crie|criar|faz|fa[cç]a|fazer|gera|gere|gerar|escreve|escreva|escrever)\b", p):
+        return "criar_arquivo_gerado", {"nome": nome_arq, "destino": extrair_destino(bruto), "pedido": bruto.strip()}
+    if (re.search(r"\babr(?:e|a|ir)\b", p)
+            and re.search(r"\b(?:pasta|diret[oó]rio|documentos|downloads?|[áa]rea de trabalho|desktop|imagens|fotos|m[úu]sicas|v[íi]deos)\b", p)):
+        destino = extrair_destino(bruto)
+        if destino:
+            return "abrir_pasta", {"destino": destino}
 
     m = re.search(r"\b(?:toca|toque|tocar|coloca|coloque|bota|bote|p[oõ]e|pesquisa|procura|busca)\s+"
                   r"(.+?)\s+(?:no|do|pelo|na)\s+youtube\b", p)
@@ -208,35 +278,20 @@ class RoteadorResposta:
     Eventos devolvidos, como tuplas (tipo, texto):
       "tela"     -> mostrar na área principal
       "frase"    -> uma frase pronta para ser FALADA
-      "conteudo" -> texto para a aba Conteúdo (depois de '---CONTEUDO---')
-
-    Texto depois de 'Dica:' aparece na tela mas não é falado.
+      "conteudo" -> texto para o bloco de conteúdo (depois de '---CONTEUDO---')
     """
 
     def __init__(self):
-        self.pendente = ""     # recebido, mas pode conter começo de marcador
+        self.pendente = ""     # recebido, mas pode conter começo do marcador
         self.fala_buf = ""     # texto que ainda não virou frase falável
-        self.modo = "fala"     # fala | dica | conteudo
+        self.modo = "fala"     # fala | conteudo
         self._conteudo_comecou = False
 
-    def _marcadores(self):
-        return (MARCA_CONTEUDO,) if self.modo == "dica" else (MARCA_CONTEUDO, MARCA_DICA)
-
-    def _primeiro_marcador(self):
-        melhor = None
-        for m in self._marcadores():
-            pos = self.pendente.find(m)
-            if pos != -1 and (melhor is None or pos < melhor[0]):
-                melhor = (pos, m)
-        return melhor
-
     def _tamanho_retido(self):
-        """Quantos caracteres do fim podem ser o começo de um marcador."""
-        marcadores = self._marcadores()
-        maximo = min(len(self.pendente), max(len(m) for m in marcadores) - 1)
+        """Quantos caracteres do fim podem ser o começo do marcador."""
+        maximo = min(len(self.pendente), len(MARCA_CONTEUDO) - 1)
         for k in range(maximo, 0, -1):
-            sufixo = self.pendente[-k:]
-            if any(m.startswith(sufixo) for m in marcadores):
+            if MARCA_CONTEUDO.startswith(self.pendente[-k:]):
                 return k
         return 0
 
@@ -245,18 +300,16 @@ class RoteadorResposta:
         if not trecho:
             return []
         eventos = [("tela", trecho)]
-        if self.modo == "fala":
-            self.fala_buf += trecho
-            frases, self.fala_buf = extrair_frases(self.fala_buf)
-            eventos += [("frase", f) for f in frases]
-        return eventos
+        self.fala_buf += trecho
+        frases, self.fala_buf = extrair_frases(self.fala_buf)
+        return eventos + [("frase", f) for f in frases]
 
     def _fechar_fala(self):
         resto, self.fala_buf = self.fala_buf.strip(), ""
         return [("frase", resto)] if resto else []
 
     def _conteudo(self, pedaco):
-        """Texto da aba Conteúdo; ignora quebras de linha logo após o marcador."""
+        """Texto do bloco de conteúdo; ignora quebras de linha logo após o marcador."""
         if not self._conteudo_comecou:
             pedaco = pedaco.lstrip("\n")
             if not pedaco:
@@ -268,24 +321,16 @@ class RoteadorResposta:
         if self.modo == "conteudo":
             return self._conteudo(pedaco)
         self.pendente += pedaco
-        eventos = []
-        while True:
-            achou = self._primeiro_marcador()
-            if achou is None:
-                break
-            pos, marcador = achou
-            eventos += self._emitir(self.pendente[:pos])
-            self.pendente = self.pendente[pos + len(marcador):]
+        pos = self.pendente.find(MARCA_CONTEUDO)
+        if pos != -1:
+            eventos = self._emitir(self.pendente[:pos])
+            resto = self.pendente[pos + len(MARCA_CONTEUDO):]
+            self.pendente = ""
             eventos += self._fechar_fala()
-            if marcador == MARCA_CONTEUDO:
-                self.modo = "conteudo"
-                resto, self.pendente = self.pendente, ""
-                return eventos + self._conteudo(resto)
-            self.modo = "dica"
-            eventos.append(("tela", MARCA_DICA))
-        retido = self._tamanho_retido()
-        corte = len(self.pendente) - retido
-        eventos += self._emitir(self.pendente[:corte])
+            self.modo = "conteudo"
+            return eventos + self._conteudo(resto)
+        corte = len(self.pendente) - self._tamanho_retido()
+        eventos = self._emitir(self.pendente[:corte])
         self.pendente = self.pendente[corte:]
         return eventos
 

@@ -10,7 +10,7 @@ def blend(cor_a, cor_b, k):
     return "#%02x%02x%02x" % tuple(int(x + (y - x) * k) for x, y in zip(a, b))
 
 
-ALVO_AMPLITUDE = {"carregando": .3, "espera": .12, "ouvindo": .55, "pensando": .3, "falando": .85}
+ALVO_AMPLITUDE = {"carregando": .3, "espera": .12, "ouvindo": .55, "olhando": .5, "pensando": .3, "falando": .85}
 
 
 def desenhar(canvas, cx, cy, escala, t, estado, amp, fundo, frente, k_inicial=0, tag="orbe"):

@@ -7,7 +7,8 @@ import datetime
 
 import requests
 
-from config import CIDADE_PADRAO  # troque a cidade em config.py
+from config import CIDADE_PADRAO
+from texto import Falha  # troque a cidade em config.py
 
 DIAS = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
         "sexta-feira", "sábado", "domingo"]
@@ -28,7 +29,7 @@ def obter_previsao_tempo(local=None):
         geo = requests.get("https://geocoding-api.open-meteo.com/v1/search",
                            params={"name": cidade, "count": 1, "language": "pt"}, timeout=6).json()
         if not geo.get("results"):
-            return f"Não encontrei a cidade '{cidade}'."
+            return Falha(f"Não encontrei a cidade '{cidade}'.")
         lugar = geo["results"][0]
         lat, lon, nome = lugar["latitude"], lugar["longitude"], lugar["name"]
 
@@ -45,7 +46,7 @@ def obter_previsao_tempo(local=None):
         descricao = descricoes.get(clima["weather_code"], "condições variadas")
         return f"Em {nome} agora: {clima['temperature_2m']:.0f}°C, {descricao}."
     except Exception as erro:
-        return f"Não consegui buscar a previsão agora ({erro})."
+        return Falha(f"Não consegui buscar a previsão agora ({erro}).")
 
 
 FERRAMENTAS = [
@@ -70,4 +71,4 @@ def executar(nome, args):
     try:
         return _FUNCOES[nome](**args)
     except Exception as erro:
-        return f"Erro ao executar {nome}: {erro}"
+        return Falha(f"Erro ao executar {nome}: {erro}")

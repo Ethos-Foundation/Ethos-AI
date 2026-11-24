@@ -213,6 +213,54 @@ class TestAvisoDeLembrete(Base):
         self.assertIn("tomar água", " ".join(LocutorFalso.instancias[0].frases))
 
 
+class TestLigacoesDaFase1(Base):
+    def setUp(self):
+        super().setUp()
+        self.efeitos = []
+        self.voz.tocar_efeito = lambda n: self.efeitos.append(n)
+
+    def test_abrir_algo_faz_a_janela_recuar(self):
+        import ferramentas_sistema
+        ferramentas_sistema.ao_abrir()
+        self.assertIn({"recuar": True}, self.msgs)
+
+    def test_ver_tela_da_retorno_ao_usuario(self):
+        import visao
+        with mock.patch.object(time, "sleep"):
+            visao.ao_evento("capturando")
+            visao.ao_evento("capturada")
+        self.assertIn({"estado": "olhando", "recuar": True}, self.msgs)           # recua e mostra o status
+        self.assertEqual(self.efeitos, ["captura"])                                  # som de "clique"
+        self.assertTrue(any("Capturei a tela" in m.get("voce", "") for m in self.msgs))
+
+    def test_avisos_do_sistema_aparecem_depois_da_resposta(self):
+        cerebro.estado["avisos"].append("Arquivo salvo em C:\\x\\a.py.")
+        with mock.patch.object(cerebro.ollama, "chat", modelo_falso("Pronto."), create=True):
+            self.orq.responder("oi", "pt")
+        indice_fim = self.msgs.index({"fim": True})
+        self.assertIn({"voce": "Arquivo salvo em C:\\x\\a.py."}, self.msgs[indice_fim:])
+
+    def test_erro_toca_o_som_de_erro(self):
+        def chat(**kw):
+            raise ConnectionError("recusada")
+            yield
+        with mock.patch.object(cerebro.ollama, "chat", chat, create=True):
+            self.orq.tarefa("texto", "oi")
+        self.assertIn("erro", self.efeitos)
+
+    def test_conversa_continua_toca_ligar_e_desligar(self):
+        original = self.voz.ouvir_uma_fala
+
+        def ouvir(**kw):
+            self.orq.conversa_ativa.clear()
+            return original(**kw)
+        self.voz.ouvir_uma_fala = ouvir
+        self.orq.conversa_ativa.set()
+        self.orq.loop_conversa()
+        self.assertEqual(self.efeitos[0], "ligar")
+        self.assertEqual(self.efeitos[-1], "desligar")
+
+
 class TestSemVoz(Base):
     def test_chat_so_de_texto_nao_cria_locutor(self):
         self.orq.falar_respostas = False

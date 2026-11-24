@@ -20,6 +20,8 @@ import base64
 import os
 import datetime
 
+from texto import Falha
+
 PASTA = os.path.dirname(os.path.abspath(__file__))
 ARQUIVO_CREDENCIAIS = os.path.join(PASTA, "credentials.json")
 ARQUIVO_TOKEN = os.path.join(PASTA, "token.json")
@@ -86,9 +88,9 @@ def ler_emails_recentes(quantidade=5, apenas_nao_lidos=False):
     try:
         servico = _obter_servico()
     except FileNotFoundError as e:
-        return str(e)
+        return Falha(str(e))
     except Exception as e:
-        return f"Não consegui me autenticar no Gmail: {e}"
+        return Falha(f"Não consegui me autenticar no Gmail: {e}")
 
     quantidade = max(1, min(int(quantidade), 15))  # trava de segurança
     query = "is:unread" if apenas_nao_lidos else ""
@@ -121,9 +123,9 @@ def buscar_emails(termo, quantidade=5):
     try:
         servico = _obter_servico()
     except FileNotFoundError as e:
-        return str(e)
+        return Falha(str(e))
     except Exception as e:
-        return f"Não consegui me autenticar no Gmail: {e}"
+        return Falha(f"Não consegui me autenticar no Gmail: {e}")
 
     quantidade = max(1, min(int(quantidade), 15))
     resultado = servico.users().messages().list(
@@ -191,6 +193,6 @@ def executar(nome, args):
         texto = str(e).lower()
         if "unable to find the server" in texto or "failed to establish" in texto \
                 or "connection" in texto or "timed out" in texto or "name or service" in texto:
-            return ("Não consegui acessar o Gmail agora. Verifique sua conexão com a internet "
-                    "(e se uma VPN, proxy ou antivírus não está bloqueando o acesso).")
-        return f"Ocorreu um erro ao acessar o Gmail: {e}"
+            return Falha("Não consegui acessar o Gmail agora. Verifique sua conexão com a internet "
+                         "(e se uma VPN, proxy ou antivírus não está bloqueando o acesso).")
+        return Falha(f"Ocorreu um erro ao acessar o Gmail: {e}")

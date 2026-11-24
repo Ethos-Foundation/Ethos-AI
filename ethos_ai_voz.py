@@ -4,7 +4,6 @@ Aqui não há lógica de conversa; isso fica em cerebro.py.
 
 Vozes (rode NA MESMA PASTA deste arquivo, uma vez cada):
     python -m piper.download_voices pt_BR-faber-medium
-    python -m piper.download_voices en_GB-alan-medium
 """
 
 import io
@@ -18,6 +17,7 @@ import numpy as np
 import sounddevice as sd
 
 import config
+import efeitos
 import memoria
 from segmentador import SegmentadorFala
 from texto import corrigir_texto, parece_alucinacao
@@ -181,13 +181,13 @@ def _transcrever(audio, idioma_forcado=None):
     inicio = time.time()
     segmentos, info = _whisper.transcribe(
         audio,
-        language=idioma_forcado,  # None = detectar sozinho
+        language=idioma_forcado or config.IDIOMA_VOZ,   # fixo em português: mais preciso
         initial_prompt=config.VOCABULARIO,
         vad_filter=True,
     )
     frase = " ".join(s.text.strip() for s in segmentos).strip()
     print(f"⏱ transcrição: {time.time() - inicio:.1f}s")
-    idioma = info.language if info.language in ("pt", "en") else "pt"
+    idioma = "pt"
     return corrigir_texto(frase, memoria.memoria.get("correcoes")), idioma
 
 
@@ -360,23 +360,11 @@ class Locutor:
 
 # ------------------------------ SONS ----------------------------------
 def tocar_efeito(nome):
-    """Efeitos curtos gerados na hora. 'ativar' = começou a ouvir; 'concluir' = entendeu."""
-    taxa = 22050
-    if nome == "ativar":
-        f_ini, f_fim, duracao = 880, 1320, 0.14
-    elif nome == "concluir":
-        f_ini, f_fim, duracao = 1320, 880, 0.12
-    elif nome == "alerta":                       # lembretes: dois toques ascendentes
-        tocar_efeito("ativar")
-        f_ini, f_fim, duracao = 1000, 1500, 0.2
-    else:
-        return
-    n = int(taxa * duracao)
-    frequencia = np.linspace(f_ini, f_fim, n)
-    fase = 2 * np.pi * np.cumsum(frequencia) / taxa
-    onda = np.sin(fase) * np.hanning(n) * 0.25
-    sd.play(onda.astype(np.float32), taxa)
-    sd.wait()
+    """Efeitos sonoros (veja efeitos.py): ativar, concluir, alerta, erro, captura, ligar, desligar."""
+    try:
+        efeitos.tocar(nome)
+    except Exception as erro:
+        print(f"⚠ não consegui tocar o efeito '{nome}': {erro}")
 
 
 # Tique sutil de "processando" enquanto a IA pensa. Para antes da fala começar
@@ -384,19 +372,10 @@ def tocar_efeito(nome):
 _processando = threading.Event()
 
 
-def _tique(frequencia):
-    taxa = 22050
-    n = int(taxa * 0.03)
-    t = np.arange(n) / taxa
-    onda = np.sin(2 * np.pi * frequencia * t) * np.hanning(n) * 0.05
-    sd.play(onda.astype(np.float32), taxa)
-    sd.wait()
-
-
 def _loop_processando():
     alternar = True
     while _processando.is_set():
-        _tique(1600 if alternar else 2000)
+        tocar_efeito("tique_a" if alternar else "tique_b")
         alternar = not alternar
         time.sleep(0.7)
 

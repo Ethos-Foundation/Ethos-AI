@@ -4,7 +4,7 @@ import json
 import os
 
 ARQUIVO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preferencias_ethos.json")
-PADRAO = {"pet": True, "voz": True, "pet_x": None, "pet_y": None}
+PADRAO = {"pet": True, "voz": True, "pet_x": None, "pet_y": None, "sarcasmo": None}
 
 
 def carregar():

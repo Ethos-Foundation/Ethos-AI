@@ -15,6 +15,8 @@ WHISPER_COMPUTE = "int8_float16"    # GPU: "int8_float16" (economiza VRAM) | CPU
 # Plano B automático se a GPU falhar (modelo, dispositivo, compute):
 WHISPER_FALLBACK = ("small", "cpu", "int8")
 
+IDIOMA_VOZ = "pt"                  # idioma que o Whisper espera ouvir
+
 # Dica de vocabulário para o Whisper: uma frase com as palavras que ele deve esperar
 # ouvir (ajuda com termos em inglês ditos com sotaque). Acrescente o que você usa.
 VOCABULARIO = ("Conversa em português do Brasil com a assistente Ethos AI. Assuntos comuns: "
@@ -46,17 +48,18 @@ PAUSA_POS_FALA = 0.5      # espera depois que ela termina de falar, antes de ouv
 # ======================= VOZ (Piper) =======================================
 ARQUIVOS_VOZ = {
     "pt": "pt_BR-faber-medium.onnx",
-    "en": "en_GB-alan-medium.onnx",   # britânica masculina (sotaque tipo Jarvis)
 }
 
 # Como a palavra deve SOAR na voz em português (a tela continua "Ethos").
 PRONUNCIAS_PT = {"Ethos": "Étos"}
 
 MOTOR_VOZ = "piper"        # "piper" ou "kokoro" (veja testar_vozes.py)
-# Vozes do Kokoro: idioma -> (voz, código de idioma). Português do Brasil: pf_dora (feminina),
-# pm_alex e pm_santa (masculinas). Inglês britânico masculino: bm_george.
-VOZ_KOKORO = {"pt": ("pf_dora", "pt-br"), "en": ("bm_george", "en-gb")}
+# Voz do Kokoro: idioma -> (voz, código de idioma). Português do Brasil: pf_dora (feminina),
+# pm_alex e pm_santa (masculinas).
+VOZ_KOKORO = {"pt": ("pf_dora", "pt-br")}
 VELOCIDADE_KOKORO = 1.0
+ESTILO_SONS = "futurista"   # "futurista" (bips de IA) ou "classico" (sons simples)
+VOLUME_EFEITOS = 1.0        # volume dos efeitos sonoros (0.0 a 1.0+)
 EFEITO_VOZ = 1.0          # intensidade do eco "Jarvis" (0 = desligado)
 SOM_PROCESSANDO = True    # tique enquanto pensa (desligar no modo conversa contínua)
 MIN_FRASE = 20            # tamanho mínimo (caracteres) de um trecho antes de falá-lo
@@ -75,6 +78,7 @@ import os as _os
 PASTA_PROJETOS = _os.path.join(_os.path.expanduser("~"), "EthosProjetos")
 
 # ======================= PERSONALIDADE E MEMÓRIA ===========================
+NIVEL_SARCASMO = 1           # 0 = sem sarcasmo | 1 = leve | 2 = médio | 3 = alto (comando /sarcasmo na janela)
 TEMPERATURA = 0.8             # criatividade da conversa (0.2 = sério, 1.0 = solta)
 MEMORIA_AUTOMATICA = True     # ela decide sozinha o que vale anotar
 CURADORIA_A_CADA = 3          # a cada quantas trocas ela revisa a conversa para anotar

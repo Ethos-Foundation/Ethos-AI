@@ -9,7 +9,11 @@ Um assistente pessoal de IA que roda **localmente** no seu computador: conversa 
 - **Conversa contínua por voz:** você liga uma vez e fala quando quiser; ela detecta quando você termina, responde falando (frase por frase, enquanto ainda pensa) e volta a ouvir.
 - **Personalidade:** humor seco, opinião própria, sem emojis. Gírias aparecem raramente e ela inventa expressões próprias.
 - **Memória automática:** de tempos em tempos ela revisa a conversa e anota sozinha o que for importante (fatos sobre você, eventos, tarefas, gírias). Você também pode pedir ("anota que...", "esquece que...").
-- **Modos:** conversa (`/conversa`), professor de inglês (`/ingles`) e tradutor (`/tradutor`).
+- **Personalidade ajustável:** `/sarcasmo 0` a `3` na janela muda a intensidade do sarcasmo (padrão 1, leve).
+- **Memória que você controla:** a aba **MEMÓRIA** lista tudo que ela sabe; dá para adicionar, editar e apagar à mão, e remover duplicatas. Quando ela anota algo sozinha, avisa no chat.
+- **Controle do PC:** abre sites, pastas ("abre a pasta downloads") e programas, e cria/salva arquivos em qualquer pasta ("cria um arquivo notas.txt na área de trabalho", "salva isso como fib.py em documentos").
+- **Sons de IA:** bips e bops gerados por código (`python testar_sons.py` para ouvir e escolher o estilo).
+- **Registro para diagnóstico:** `ethos.log` guarda o que ela ouviu, respondeu, as ferramentas usadas e os erros.
 - **Ferramentas que ela usa sozinha:** hora e data, previsão do tempo, abrir sites e programas, criar arquivos de código, ler e buscar e-mails (somente leitura).
 - **Chat com histórico:** a janela é um chat normal (suas mensagens e as dela, por voz ou texto), com bloco de código copiável. O histórico é lembrado entre aberturas.
 - **Pet no canto da tela:** um orbe sempre visível; clique nele para falar uma vez com ela.
@@ -40,7 +44,6 @@ pip install -r requirements.txt
 
 # 3. Vozes do Piper (ficam na pasta do projeto)
 python -m piper.download_voices pt_BR-faber-medium
-python -m piper.download_voices en_GB-alan-medium
 ```
 
 Na primeira execução o Whisper baixa o modelo de reconhecimento de voz (uma vez só; o `large-v3-turbo` tem cerca de 1,6 GB).
@@ -56,6 +59,8 @@ Na primeira execução o Whisper baixa o modelo de reconhecimento de voz (uma ve
 | `python ethos_ai_gui.py` | Interface gráfica (recomendado) |
 | `python ethos_ai_gui.py --segundo-plano` | Só o pet (janela escondida); atalhos e voz funcionam |
 | `python testar_gmail.py` | Diagnóstico da leitura de e-mails |
+| `python testar_sons.py` | Toca os efeitos sonoros (escolha o estilo) |
+| `python testar_ollama.py` | Confere se o Ollama tem os modelos que a Ethos pede |
 | `python testar_visao.py` | Compara modelos de visão: tempo, memória de vídeo e qualidade |
 | `python ethos_terminal.py` | Modo terminal, sem janela |
 | `python testar_vozes.py` | Toca as vozes lado a lado (Piper x Kokoro) |
@@ -90,16 +95,18 @@ Fechar a janela no X só a esconde, e a Ethos continua no pet. Para encerrar de 
 
 ### Botões e comandos digitados
 
-`● FALAR`, `■ PARAR`, `∞ CONTÍNUO`, `✕ CALAR`, `VOZ: LIGADA/MUDA` (MUDA = chat só de texto), `PET`, `LIMPAR CHAT` e os modos `CONVERSA / INGLÊS / TRADUTOR`. Enter envia; Shift+Enter quebra linha. Comandos digitados:
+`● FALAR`, `■ PARAR`, `∞ CONTÍNUO`, `✕ CALAR`, `VOZ: LIGADA/MUDA` (MUDA = chat só de texto), `PET`, `LIMPAR CHAT` e `SAIR`. Enter envia; Shift+Enter quebra linha. Comandos digitados:
 
 | Comando | O que faz |
 |---|---|
-| `/conversa`, `/ingles`, `/tradutor` | Troca o modo |
+| `/sarcasmo 0` a `3` | Intensidade do sarcasmo (padrão 1) |
+| `/log` | Mostra as últimas linhas do `ethos.log` |
 | `/memoria` | Mostra tudo que ela guardou |
 | `/corrigir e maio = e-mail` | Ensina uma correção de voz (quando o Whisper entende errado) |
 | `/lembretes` | Lista os lembretes agendados |
 | `/limpar` | Limpa o chat |
-| `F11` / `Esc` | Tela cheia / sair da tela cheia |
+| `F11` | Maximiza / restaura a janela |
+| `Ctrl+Q` | Encerra a Ethos |
 
 ### Exemplos
 
@@ -126,6 +133,8 @@ Tudo fica num arquivo só. As principais:
 | `LIMITE_VOLUME`, `SILENCIO_CONVERSA` | Sensibilidade do microfone e quanto silêncio indica fim da fala |
 | `PAUSA_POS_FALA` | Espera após ela falar, antes de ouvir de novo (aumente se ela ouvir a si mesma) |
 | `MOTOR_VOZ`, `ARQUIVOS_VOZ`, `VOZ_KOKORO`, `EFEITO_VOZ` | Motor de voz (Piper/Kokoro), arquivos das vozes e eco "Jarvis" |
+| `ESTILO_SONS`, `VOLUME_EFEITOS` | Estilo dos efeitos sonoros (`futurista` ou `classico`) e volume |
+| `NIVEL_SARCASMO` | Intensidade do sarcasmo (0 a 3; também `/sarcasmo` na janela) |
 | `MEMORIA_AUTOMATICA`, `CURADORIA_A_CADA` | Anotação automática e a cada quantas trocas ela revisa |
 | `PROB_GIRIA`, `PROB_INVENTAR_GIRIA` | Frequência de gírias e de expressões novas |
 | `MODELO_VISAO`, `VISAO_KEEP_ALIVE`, `VISAO_MAX_LADO` | Modelo de visão, quanto tempo fica na GPU e tamanho da captura |
@@ -203,6 +212,9 @@ Peça à assistente para ler seus e-mails (por exemplo, "lê meus e-mails"). Uma
 | `texto.py` | Funções de texto puras: frases, filtros, correções, mensagens de erro |
 | `segmentador.py` | Detecta quando você começa e termina de falar |
 | `lembretes.py`, `tempo.py`, `ferramentas_lembretes.py` | Lembretes: armazenamento e agendador, interpretação de "amanhã às 9h" etc., ferramentas |
+| `aba_memoria.py` | Aba MEMÓRIA da janela |
+| `efeitos.py` | Efeitos sonoros (gerados por código; seus `.wav` em `sons/` têm prioridade) |
+| `registro.py` | `ethos.log` e vigia de travamento da janela |
 | `visao.py`, `ferramentas_visao.py` | Captura da tela e análise com modelo de visão |
 | `memoria.py` | Memória persistente (fatos, gírias, dialeto, correções, tarefas, eventos) |
 | `ferramentas_externas.py` | Hora, data e previsão do tempo |
@@ -214,7 +226,7 @@ Peça à assistente para ler seus e-mails (por exemplo, "lê meus e-mails"). Uma
 | `criar_atalho.py`, `ethos_icone.ico` | Atalho da área de trabalho |
 | `tests/` | Testes automáticos |
 
-Criados pelo programa (não vão para o repositório): `memoria_ethos.json`, `lembretes_ethos.json`, `chat_ethos.json`, `preferencias_ethos.json`, `token.json`, os `.onnx` das vozes.
+Criados pelo programa (não vão para o repositório): `memoria_ethos.json`, `ethos.log`, `lembretes_ethos.json`, `chat_ethos.json`, `preferencias_ethos.json`, `token.json`, os `.onnx` das vozes.
 
 ---
 

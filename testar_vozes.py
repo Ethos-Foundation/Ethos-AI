@@ -15,7 +15,6 @@ import ethos_ai_voz as voz
 
 FRASES = {
     "pt": "Boa noite. Todos os sistemas estão operando normalmente, e eu continuo achando você bastante interessante.",
-    "en": "Good evening. All systems are running normally, and I still find you rather interesting.",
 }
 
 TESTES = [
@@ -23,8 +22,6 @@ TESTES = [
     ("Kokoro pf_dora (feminina)", "pt", dict(motor="kokoro", voz_kokoro="pf_dora")),
     ("Kokoro pm_alex (masculina)", "pt", dict(motor="kokoro", voz_kokoro="pm_alex")),
     ("Kokoro pm_santa (masculina)", "pt", dict(motor="kokoro", voz_kokoro="pm_santa")),
-    ("Piper inglês (atual)", "en", dict(motor="piper")),
-    ("Kokoro bm_george (inglês britânico)", "en", dict(motor="kokoro", voz_kokoro="bm_george")),
 ]
 
 for nome, idioma, opcoes in TESTES:

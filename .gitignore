@@ -20,6 +20,8 @@ memoria_ethos.json
 
 # Histórico do chat e preferências da janela (pessoais)
 chat_ethos.json
+ethos.log
+ethos.log.*
 captura_teste.jpg
 lembretes_ethos.json
 preferencias_ethos.json

@@ -1,11 +1,12 @@
 """
-Cérebro da Ethos AI: modos de conversa, histórico, ferramentas, memória
-automática e o streaming da resposta do modelo. Não sabe nada de áudio nem de
-janela: a GUI e o terminal usam esta mesma função, `conversar()`.
+Cérebro da Ethos AI: personalidade, histórico, ferramentas, memória automática e o streaming
+da resposta do modelo. Não sabe nada de áudio nem de janela: a GUI e o terminal usam esta
+mesma função, `conversar()`.
 """
 
 import datetime
 import random
+import re
 import threading
 import time
 
@@ -19,112 +20,119 @@ import ferramentas_sistema
 import ferramentas_visao
 import memoria
 import texto
+from registro import log, resumo as _resumo
 
 _CONTEUDO = (
     "EXCEÇÃO: se o usuário pedir código, um poema, uma redação, um texto longo "
     "ou qualquer conteúdo para ser escrito/copiado (não apenas conversado), "
     "responda em DUAS partes separadas EXATAMENTE pela linha '---CONTEUDO---' "
     "(sozinha, sem mais nada nela): antes dessa linha, uma confirmação FALADA "
-    "bem curta e com personalidade, tipo 'Pronto, já está na tela.'; depois "
-    "dessa linha, o conteúdo completo, sem comentários extras, sem repetir a "
-    "confirmação. Use essa marcação SOMENTE nesses casos, nunca numa conversa normal."
+    "bem curta, tipo 'Pronto, já está na tela.'; depois dessa linha, o conteúdo "
+    "completo, sem comentários extras, sem repetir a confirmação. Use essa marcação "
+    "SOMENTE nesses casos, nunca numa conversa normal."
 )
 
-PERSONA = (
-    "Você é a ETHOS, uma assistente pessoal de IA no estilo do JARVIS do Homem de "
-    "Ferro, com um toque de VTuber IA. Personalidade: educada, refinada e eficiente, "
-    "com humor seco e sarcasmo elegante. Você tem opinião própria, faz observações "
-    "espirituosas sobre o que o usuário diz e o provoca com carinho (ironia fina, "
-    "nunca cruel). Quando ele enrola, exagera ou se contradiz, você comenta com "
-    "sarcasmo, mas SEMPRE resolve o pedido. Tom de um mordomo high-tech que acha o "
-    "usuário genuinamente divertido: calmo, confiante, levemente superior. De vez em "
-    "quando pode soltar uma piada absurda e curta, com espontaneidade.\n\n"
-    "REGRAS DE FALA: sua resposta será FALADA em voz alta. Português do Brasil, "
-    "natural e falado. No máximo 3 frases curtas. NUNCA use emojis, listas, "
-    "asteriscos, títulos, formatação nem ações entre asteriscos. Não comece com "
-    "'Claro', 'Certamente' ou 'Com certeza'. Nada de elogios genéricos, e não "
-    "termine toda resposta oferecendo ajuda.\n\n"
-    "MEMÓRIA: o 'contexto interno' que vem junto da mensagem do usuário é só pano de "
-    "fundo. Use um dado dele SOMENTE quando for realmente relevante para o que foi "
-    "dito. Nunca recite o que você sabe, nunca diga 'eu lembro que' e não repita a "
-    "mesma informação em respostas seguidas.\n\n"
-    "AÇÕES: para abrir sites, tocar música, ler e-mails, criar lembretes, olhar a tela do usuário e afins, SEMPRE chame a ferramenta; nunca "
-    "diga que fez algo sem ter chamado a ferramenta. Se um resultado de ferramenta indicar erro, "
-    "conte o problema ao usuário com clareza.\n\n"
-    "GÍRIAS: você fala português normal. Gíria é tempero raro: só use uma quando o "
-    "contexto interno sugerir uma e ela encaixar naturalmente, no máximo uma por "
-    "resposta. Quando o contexto pedir uma expressão nova inventada por você, crie "
-    "uma curta e engraçada, e deixe claro o que significa.\n\n"
-    "Exemplos de TOM (não copie as frases): usuário: 'Tô sem vontade de estudar.' -> "
-    "'Que novidade, a vontade sempre some quando a prova aparece. Quinze minutos de "
-    "foco e depois a gente renegocia o resto.' | usuário: 'Me fala uma curiosidade.' "
-    "-> 'Polvos têm três corações. Ainda assim, nenhum aprendeu a responder mensagem "
-    "no mesmo dia.'\n\n" + _CONTEUDO
-)
+# Quatro intensidades de sarcasmo (config.NIVEL_SARCASMO ou o comando /sarcasmo na janela).
+_TONS = {
+    0: ("Tom: gentil, calorosa e objetiva. Sem sarcasmo e sem ironia: seja simpática e direta.",
+        "usuário: 'Tô sem vontade de estudar.' -> 'Acontece com todo mundo. Que tal começar só com "
+        "quinze minutos e ver como você se sente depois?'"),
+    1: ("Tom: educada, calorosa e eficiente, com um humor leve de vez em quando. O sarcasmo é raro, "
+        "sempre carinhoso e nunca em cima de algo que o incomode. Na dúvida, seja simpática.",
+        "usuário: 'Tô sem vontade de estudar.' -> 'Imagino. Quinze minutos de foco já ajudam, e "
+        "depois a gente vê se o resto da vontade aparece.'"),
+    2: ("Tom: educada e refinada, com humor seco e sarcasmo elegante em boa parte das respostas, "
+        "sempre carinhoso e nunca cruel. Faz observações espirituosas, mas SEMPRE resolve o pedido.",
+        "usuário: 'Tô sem vontade de estudar.' -> 'Que novidade, a vontade some sempre que a prova "
+        "aparece. Quinze minutos de foco e depois a gente renegocia o resto.'"),
+    3: ("Tom: sarcástica e provocadora, com ironia fina na maioria das respostas, como um mordomo "
+        "high-tech que acha o usuário divertido: calmo, confiante, levemente superior. Nunca cruel, "
+        "e SEMPRE resolve o pedido.",
+        "usuário: 'Tô sem vontade de estudar.' -> 'Que surpresa, a vontade evapora quando a prova "
+        "chega. Quinze minutos de foco e depois a gente discute a sua tragédia.'"),
+}
+
+
+def montar_persona(nivel):
+    nivel = max(0, min(3, int(nivel)))
+    tom, exemplo = _TONS[nivel]
+    return (
+        "Você é a ETHOS, uma assistente pessoal de IA no estilo do JARVIS do Homem de Ferro, com "
+        "um toque de VTuber IA. " + tom + " Tem opinião própria e não é bajuladora.\n\n"
+        "REGRAS DE FALA: sua resposta será FALADA em voz alta. Português do Brasil, natural e "
+        "falado. No máximo 3 frases curtas. NUNCA use emojis, listas, asteriscos, títulos, "
+        "formatação nem ações entre asteriscos. Não comece com 'Claro', 'Certamente' ou 'Com "
+        "certeza'. Nada de elogios genéricos, e não termine toda resposta oferecendo ajuda.\n\n"
+        "MEMÓRIA: o 'contexto interno' que vem junto da mensagem do usuário é só pano de fundo. "
+        "Use um dado dele SOMENTE quando for realmente relevante para o que foi dito. Nunca "
+        "recite o que você sabe, nunca diga 'eu lembro que' e não repita a mesma informação em "
+        "respostas seguidas.\n\n"
+        "AÇÕES: para abrir sites, tocar música, ler e-mails, criar lembretes, olhar a tela do "
+        "usuário e afins, SEMPRE chame a ferramenta; nunca diga que fez algo sem ter chamado a "
+        "ferramenta. Ao descrever a tela, use SOMENTE o que a ferramenta devolveu: nunca invente "
+        "o que está nela nem misture com o que você sabe sobre o usuário.\n\n"
+        "GÍRIAS: você fala português normal. Gíria é tempero raro: só use uma quando o contexto "
+        "interno sugerir uma e ela encaixar naturalmente, no máximo uma por resposta. Quando o "
+        "contexto pedir uma expressão nova inventada por você, crie uma curta e engraçada, e "
+        "deixe claro o que significa.\n\n"
+        "Exemplo de TOM (não copie a frase): " + exemplo + "\n\n" + _CONTEUDO
+    )
+
 
 MODOS = {
-    "conversa": {
-        "ouvir": "pt", "ferramentas": True, "temperatura": config.TEMPERATURA,
-        "prompt": PERSONA,
-        "aviso": ("pt", "Modo conversa ativado."),
-    },
-    "ingles": {
-        "ouvir": "en", "ferramentas": False, "temperatura": 0.7,
-        "prompt": (
-            "You are ETHOS AI, a friendly English tutor and conversation partner with a "
-            "dry, witty sense of humor. The user is a Brazilian learning English. Reply in "
-            "simple, natural English (level B1), in at most 2 short sentences, and ask a "
-            "short follow-up question to keep the conversation going. Your replies will be "
-            "spoken aloud, so never use emojis, lists, asterisks or formatting. If the user "
-            "made a grammar or vocabulary mistake, add at the very end a short tip IN "
-            "PORTUGUESE starting with 'Dica:' showing the corrected sentence. If there was "
-            "no mistake, do not add any tip."
-        ),
-        "aviso": ("en", "English practice mode on. Let's talk!"),
-    },
-    "tradutor": {
-        "ouvir": None,  # o Whisper descobre sozinho se você falou português ou inglês
-        "ferramentas": False, "temperatura": 0.2,
-        "prompt": (
-            "Você é um tradutor profissional. Se o usuário falar em português, traduza "
-            "para o inglês. Se falar em inglês, traduza para o português do Brasil. "
-            "Responda SOMENTE com a tradução, sem comentários, sem aspas e sem explicações."
-        ),
-        "aviso": ("pt", "Modo tradutor ativado. Fale em português ou inglês."),
-    },
+    "conversa": {"ferramentas": True, "temperatura": config.TEMPERATURA,
+                 "prompt": montar_persona(config.NIVEL_SARCASMO)},
 }
 
 # Ferramentas lentas: avisa em voz alta antes, para não ficar um silêncio longo.
 AVISOS_LENTOS = {"ver_tela": "Um instante, vou olhar. "}
+# Pedidos em que a memória sobre o usuário NÃO deve ir junto (o modelo misturava).
+SEM_MEMORIA = {"ver_tela"}
 
-# Só guarda pares (pergunta, resposta) em texto limpo. Mensagens de ferramenta
-# existem apenas durante a pergunta em andamento, então cortar o histórico é seguro.
 # "historico" = pares (pergunta, resposta) em texto limpo (usado pelo curador de memória).
-# "turnos" = o que o MODELO vê: cada turno inclui as chamadas de ferramenta e seus
-# resultados. Sem isso o modelo vê "Abri o YouTube" no histórico, sem a chamada, e passa
-# a só DIZER que fez, sem fazer.
-estado = {"modo": "conversa", "historico": [], "turnos": [], "gerando": False}
+# "turnos" = o que o MODELO vê: cada turno inclui as chamadas de ferramenta e seus resultados.
+# Sem isso o modelo vê "Abri o YouTube" no histórico, sem a chamada, e passa a só DIZER que fez.
+estado = {"modo": "conversa", "historico": [], "turnos": [], "gerando": False,
+          "ultimo_conteudo": "", "avisos": []}
+notificar = None      # a janela registra aqui uma função(msg) para avisos assíncronos (curador)
 
 
-def trocar_modo(nome):
-    estado["modo"] = nome
+def definir_sarcasmo(nivel):
+    """Muda a intensidade do sarcasmo (0 a 3) e devolve o nível aplicado."""
+    nivel = max(0, min(3, int(nivel)))
+    config.NIVEL_SARCASMO = nivel
+    MODOS["conversa"]["prompt"] = montar_persona(nivel)
+    return nivel
+
+
+def trocar_modo(nome="conversa"):
+    """Reinicia a conversa (o único modo é 'conversa')."""
+    estado["modo"] = "conversa"
     estado["historico"] = []
     estado["turnos"] = []
 
 
 def idioma_de_escuta():
-    """Idioma que o Whisper deve esperar no modo atual (None = detectar)."""
-    return MODOS[estado["modo"]]["ouvir"]
+    return config.IDIOMA_VOZ
 
 
-def idioma_da_resposta(idioma_entrada):
-    """Em que idioma a Ethos vai FALAR a resposta."""
-    modo = estado["modo"]
-    if modo == "ingles":
-        return "en"
-    if modo == "tradutor":
-        return "en" if idioma_entrada == "pt" else "pt"
+def idioma_da_resposta(idioma_entrada=None):
     return "pt"
+
+
+def pegar_avisos():
+    """Avisos do sistema gerados durante a resposta (ex.: onde um arquivo foi salvo)."""
+    avisos, estado["avisos"] = estado["avisos"], []
+    return avisos
+
+
+def _avisar_depois(msg):
+    log.info("aviso: %s", msg)
+    if notificar:
+        try:
+            notificar(msg)
+        except Exception:
+            pass
 
 
 # ------------------------------ ferramentas ------------------------------
@@ -135,22 +143,32 @@ TODAS_FERRAMENTAS = (
 )
 
 
+def _salvar_ultimo_conteudo(nome="", destino=""):
+    conteudo = estado["ultimo_conteudo"]
+    if not conteudo:
+        return texto.Falha("Não tenho nenhum conteúdo recente para salvar. Peça para eu escrever algo primeiro.")
+    if not nome:
+        nome = "ethos_conteudo." + ("py" if re.search(r"^\s*(def |import |class |from \w+ import )", conteudo, re.M) else "txt")
+    return ferramentas_sistema.salvar_arquivo(nome, conteudo, destino)
+
+
 def executar_ferramenta(nome, args):
-    if nome in memoria._FUNCOES:
+    if nome == "salvar_ultimo_conteudo":
+        resultado = _salvar_ultimo_conteudo(**args)
+    elif nome in memoria._FUNCOES:
         resultado = memoria.executar(nome, args)
     else:
-        resultado = ferramentas_externas.executar(nome, args)
+        resultado = None
+        for modulo in (ferramentas_externas, ferramentas_sistema, ferramentas_gmail,
+                       ferramentas_lembretes, ferramentas_visao):
+            resultado = modulo.executar(nome, args)
+            if resultado is not None:
+                break
         if resultado is None:
-            resultado = ferramentas_sistema.executar(nome, args)
-        if resultado is None:
-            resultado = ferramentas_gmail.executar(nome, args)
-        if resultado is None:
-            resultado = ferramentas_lembretes.executar(nome, args)
-        if resultado is None:
-            resultado = ferramentas_visao.executar(nome, args)
-        if resultado is None:
-            resultado = f"Ferramenta desconhecida: {nome}"
+            resultado = texto.Falha(f"Ferramenta desconhecida: {nome}")
     print(f"🔧 {nome}({dict(args)}) -> {str(resultado)[:300]}")
+    log.info("ferramenta %s(%s) -> %s%s", nome, _resumo(dict(args), 150), "FALHA: " if isinstance(resultado, texto.Falha) else "",
+             _resumo(resultado, 250))
     return resultado
 
 
@@ -183,25 +201,42 @@ def _mensagens_base():
 
 def conversar(pergunta):
     """Gerador: devolve a resposta em pedaços de texto, À MEDIDA que o modelo gera.
-    Se o modelo chamar ferramentas, elas são executadas e a resposta continua."""
-    nome_modo = estado["modo"]
-    modo = MODOS[nome_modo]
+    Se o modelo chamar ferramentas, elas são executadas e a resposta continua. Se uma
+    ferramenta FALHAR, o erro é mostrado exatamente como é (sem o modelo reescrever)."""
+    modo = MODOS[estado["modo"]]
     resposta = ""
     turno_extra = []      # chamadas de ferramenta deste turno (vão para o histórico do modelo)
+    salvar_em = None      # (nome, destino) quando o pedido é "cria um arquivo X": a Ethos grava depois
     estado["gerando"] = True
+    log.info("pergunta: %s", _resumo(pergunta))
+    inicio = time.time()
     try:
-        if nome_modo == "conversa" and texto.eh_pergunta_de_horario(pergunta):
+        if texto.eh_pergunta_de_horario(pergunta):
             resposta = ferramentas_externas.obter_data_hora()
             yield resposta
             return
 
-        conteudo_usuario = pergunta + (_notas_do_turno(pergunta) if modo["ferramentas"] else "")
-        mensagens = _mensagens_base() + [{"role": "user", "content": conteudo_usuario}]
-        ferramentas = TODAS_FERRAMENTAS if modo["ferramentas"] else None
+        comando = texto.detectar_comando(pergunta)
+        ferramentas = TODAS_FERRAMENTAS
+        instrucao_extra = ""
 
-        # Comando claro (abrir site, tocar no YouTube, ler e-mails): executa AGORA, com
-        # certeza, e o modelo só confirma com personalidade.
-        comando = texto.detectar_comando(pergunta) if modo["ferramentas"] else None
+        if comando and comando[0] == "criar_arquivo_gerado":
+            nome_arq, destino, _ = comando[1]["nome"], comando[1]["destino"], comando[1]["pedido"]
+            if ferramentas_sistema.resolver_destino(destino) is None:
+                resposta = f"Não encontrei a pasta '{destino}'."
+                yield resposta
+                return
+            salvar_em = (nome_arq, destino)
+            instrucao_extra = (f"\n\n[Instrução: responda no formato com a linha '---CONTEUDO---': uma confirmação "
+                               f"falada bem curta e, depois da linha, SOMENTE o conteúdo completo do arquivo "
+                               f"{nome_arq}, sem cercas de código e sem comentários extras.]")
+            comando, ferramentas = None, None
+
+        notas = "" if (comando and comando[0] in SEM_MEMORIA) else _notas_do_turno(pergunta)
+        mensagens = _mensagens_base() + [{"role": "user", "content": pergunta + notas + instrucao_extra}]
+
+        # Comando claro (abrir site, tocar no YouTube, ler e-mails...): executa AGORA, com certeza,
+        # e o modelo só confirma com personalidade.
         if comando:
             nome_f, args_f = comando
             aviso = AVISOS_LENTOS.get(nome_f)
@@ -209,6 +244,10 @@ def conversar(pergunta):
                 resposta += aviso
                 yield aviso
             resultado = executar_ferramenta(nome_f, args_f)
+            if isinstance(resultado, texto.Falha):
+                resposta += str(resultado)
+                yield str(resultado)
+                return
             ferr_msgs = [{"role": "assistant", "content": "",
                           "tool_calls": [{"function": {"name": nome_f, "arguments": args_f}}]},
                          {"role": "tool", "content": str(resultado)}]
@@ -216,6 +255,7 @@ def conversar(pergunta):
             turno_extra += ferr_msgs
             ferramentas = None      # já foi feito; não chamar de novo
 
+        falhou = False
         for _ in range(config.MAX_RODADAS_FERRAMENTA):
             filtro = texto.FiltroPensamento()
             chamadas, texto_rodada = [], ""
@@ -241,43 +281,64 @@ def conversar(pergunta):
                 break
             novas = [{"role": "assistant", "content": texto.limpar_fala(texto_rodada),
                       "tool_calls": chamadas}]
+            falhas = []
             for c in chamadas:
-                resultado = executar_ferramenta(c["function"]["name"],
-                                                c["function"]["arguments"])
+                resultado = executar_ferramenta(c["function"]["name"], c["function"]["arguments"])
                 novas.append({"role": "tool", "content": str(resultado)})
+                if isinstance(resultado, texto.Falha):
+                    falhas.append(str(resultado))
             mensagens += novas
             turno_extra += novas
+            if falhas:                      # mostra o erro como ele é e encerra
+                falha = (" " if resposta else "") + " ".join(falhas)
+                resposta += falha
+                yield falha
+                falhou = True
+                break
 
         if not resposta.strip():
             resposta = "Não consegui concluir isso agora."
             yield resposta
+
+        conteudo = texto.extrair_conteudo(resposta)
+        if conteudo and not falhou:
+            estado["ultimo_conteudo"] = conteudo
+        if salvar_em:
+            if conteudo:
+                resultado = ferramentas_sistema.salvar_arquivo(salvar_em[0], conteudo, salvar_em[1])
+            else:
+                resultado = texto.Falha("Não consegui gerar o conteúdo do arquivo, então não salvei nada.")
+            log.info("salvar %s -> %s", salvar_em[0], resultado)
+            estado["avisos"].append(str(resultado))
     finally:
         estado["gerando"] = False
         falado = texto.limpar_fala(resposta.split(texto.MARCA_CONTEUDO)[0]).strip()
+        log.info("resposta (%.1fs): %s", time.time() - inicio, _resumo(falado))
         if falado:
             estado["historico"] += [{"role": "user", "content": pergunta},
                                     {"role": "assistant", "content": falado}]
             estado["turnos"].append([{"role": "user", "content": pergunta}] + turno_extra
                                     + [{"role": "assistant", "content": falado}])
             del estado["turnos"][:-config.MAX_TROCAS_HISTORICO]
-            if nome_modo == "conversa":
-                _agendar_curadoria()
+            _agendar_curadoria()
 
 
 # ------------------------ memória automática ------------------------------
-# De tempos em tempos (a cada CURADORIA_A_CADA trocas, e quando a conversa
-# contínua é desligada) o próprio modelo relê o trecho recente da conversa e
-# decide o que vale guardar. Roda em segundo plano e espera a Ethos ficar
-# livre, para não atrasar nenhuma resposta.
+# De tempos em tempos (a cada CURADORIA_A_CADA trocas, e quando a conversa contínua é desligada)
+# o próprio modelo relê o trecho recente da conversa e decide o que vale guardar. Roda em segundo
+# plano e espera a Ethos ficar livre, para não atrasar nenhuma resposta. Nada que já exista (ou
+# que seja parecido) é guardado de novo, e tudo o que for anotado é avisado no chat.
 PROMPT_CURADOR = (
     "Você é o módulo de memória de uma assistente pessoal. Leia o trecho da conversa e "
     "decida o que vale guardar a LONGO PRAZO sobre o USUÁRIO. Guarde só informação "
     "durável e útil que o usuário DISSE explicitamente: nome, família, amigos, "
     "trabalho/estudos, projetos, metas, gostos e aversões, rotina, saúde relevante, "
     "datas e acontecimentos importantes, decisões. NÃO guarde: conversa fiada, "
-    "perguntas gerais, curiosidades, pedidos pontuais (hora, abrir site), coisas que só "
-    "a assistente disse, nada temporário e nada que já esteja na memória. Em 'dialeto', "
-    "registre qualquer expressão/gíria NOVA que a ASSISTENTE tenha inventado, com o "
+    "perguntas gerais, curiosidades, pedidos pontuais (hora, abrir site, olhar a tela), "
+    "descrições de tela, coisas que só a assistente disse, nada temporário, nada que já esteja "
+    "na memória ou que diga o mesmo que algo da memória. Compromissos futuros com hora marcada "
+    "(reuniões, provas, lembretes) pertencem ao sistema de lembretes: NÃO os registre. Em "
+    "'dialeto', registre qualquer expressão/gíria NOVA que a ASSISTENTE tenha inventado, com o "
     "significado. Responda SOMENTE um JSON neste formato: "
     '{"fatos":[{"chave":"","valor":""}],"eventos":[{"texto":"","data":""}],'
     '"girias_usuario":[{"termo":"","significado":""}],"dialeto":[{"termo":"","significado":""}]}. '
@@ -304,33 +365,29 @@ def _texto_curto(valor, limite=140):
 
 
 def aplicar_curadoria(dados):
-    """Grava na memória o que o curador decidiu. Devolve a lista do que foi anotado."""
+    """Grava na memória o que o curador decidiu (sem repetir o que já existe).
+    Devolve a lista do que foi de fato anotado."""
     anotado = []
-    restante = 3
-    for item in (dados.get("fatos") or [])[:restante]:
+    for item in (dados.get("fatos") or [])[:3]:
         chave, valor = _texto_curto(item.get("chave", ""), 40), _texto_curto(item.get("valor", ""))
-        if chave and valor and memoria.memoria["fatos"].get(chave.lower()) != valor:
-            memoria.salvar_fato(chave, valor)
+        if chave and len(valor) >= 3 and memoria.guardar_fato(chave, valor):
             anotado.append(f"{chave}: {valor}")
-    for item in (dados.get("eventos") or [])[:restante]:
+    for item in (dados.get("eventos") or [])[:3]:
         evento, data = _texto_curto(item.get("texto", "")), str(item.get("data") or "").strip()
         try:
             datetime.date.fromisoformat(data)
         except ValueError:
             data = None
-        if evento:
-            memoria.registrar_evento(evento, data)
+        if len(evento.split()) >= 3 and memoria.guardar_evento(evento, data):
             anotado.append(f"evento: {evento}")
-    for item in (dados.get("girias_usuario") or [])[:restante]:
+    for item in (dados.get("girias_usuario") or [])[:3]:
         termo, sig = _texto_curto(item.get("termo", ""), 40), _texto_curto(item.get("significado", ""))
-        if termo and sig:
-            memoria.aprender_giria(termo, sig)
+        if termo and sig and memoria.guardar_giria(termo, sig):
             anotado.append(f"gíria sua: {termo}")
-    for item in (dados.get("dialeto") or [])[:restante]:
+    for item in (dados.get("dialeto") or [])[:3]:
         termo, sig = _texto_curto(item.get("termo", ""), 40), _texto_curto(item.get("significado", ""))
-        if termo and sig:
-            memoria.aprender_dialeto(termo, sig)
-            anotado.append(f"expressão própria: {termo}")
+        if termo and sig and memoria.guardar_dialeto(termo, sig):
+            anotado.append(f"expressão dela: {termo}")
     return anotado
 
 
@@ -351,8 +408,10 @@ def curar_memoria():
             return
         conversa = "\n".join(
             f"{'Usuário' if m['role'] == 'user' else 'Assistente'}: {m['content']}" for m in trocas)
-        atuais = "; ".join(f"{k}: {v}" for k, v in list(memoria.memoria["fatos"].items())[-40:])
-        pedido = (f"Memória atual (não repita): {atuais or '(vazia)'}\n"
+        fatos = "; ".join(f"{k}: {v}" for k, v in list(memoria.memoria["fatos"].items())[-40:])
+        eventos = "; ".join(f"{e['data']}: {e['texto']}" for e in memoria.memoria["eventos"][-15:])
+        pedido = (f"Memória atual (não repita nada parecido) - fatos: {fatos or '(vazio)'}\n"
+                  f"Eventos já guardados: {eventos or '(nenhum)'}\n"
                   f"Data de hoje: {datetime.date.today().isoformat()}\n\nConversa:\n{conversa}")
         resposta = ollama.chat(
             model=config.MODELO_IA, format="json", think=False, keep_alive=config.KEEP_ALIVE,
@@ -363,7 +422,9 @@ def curar_memoria():
         if dados:
             for linha in aplicar_curadoria(dados):
                 print(f"🧠 memorizou: {linha}")
+                _avisar_depois(f"Anotei na memória: {linha}")
     except Exception as erro:
         print(f"⚠ curadoria de memória falhou: {erro}")
+        log.warning("curadoria de memória falhou: %s", erro)
     finally:
         _trava_curadoria.release()
